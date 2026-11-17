@@ -190,7 +190,30 @@ M3–M5 完成后在真实 Docker（Engine 29.6.2 / API 1.55）+ MySQL 8.0.39 + 
 
 **已知环境限制**：`dsh:0.2.1-rc.5` 在这台宿主上 `docker commit` 报 `content digest ... not found`（同宿主 redis / console-api 等镜像 commit 均正常），属宿主镜像存储缺 blob；修复命令 `docker save dsh:0.2.1-rc.5 | docker load`。用户镜像功能代码路径由单测（FakeDriver）与其它镜像的 commit 验证覆盖。
 
-> **仓库卫生**：回归脚本里的主机地址、端口、数据库口令全部改为环境变量（`scripts/_remote.py` + git-ignored 的 `scripts/.remote.env`）。此前一次提交曾硬编码过一台测试机的 IP，该提交已被 amend 覆盖并 `reflog expire` + `gc --prune=now` 清除，当前对象库中不含该地址。
+> **仓库卫生**：回归脚本里的主机地址、端口、数据库口令全部改为环境变量（`scripts/_remote.py` + git-ignored 的 `scripts/.remote.env`）。此前一次提交曾硬编码过一台测试机的 IP，该提交已被 amend 覆盖并 `reflog expire` + `gc --prune=now` 清除，当前对象库中不含该地址。CI 里 `scripts/check_no_secrets.py --history` 会持续守住这条线。
+
+## 5.1 版本自动发现（2026-11-17）
+
+需求：除了导入 tar 包，还要能发现 `dsh-docker` 在 GitHub 上发布的新包。
+
+实现（`services/registry.py` + `services/image_catalog.py`）：
+
+- 走 Registry HTTP API（`/v2/` 挑战 → bearer token → `tags/list` → `manifests/<tag>` → `config` blob），**只读元数据不拉镜像**。
+- 只把 `x.y.z` / `x.y.z-pre` / `v…` / `…-slim` 当版本；`latest`、`sha-*` 过滤掉。
+- 合并本地状态：先按完整引用匹配，再退回按 `version` 匹配，所以手工登记的 `dsh:0.2.1-rc.5` 也算「已导入」。
+- 定时（默认 6h）+ 手动检查；结果缓存进 `settings.registry_state`，仓库不可达时**保留上次快照**并标注错误。
+- 一键导入 = `docker pull` + 入库；tar 上传 = 写盘 + `docker load` + 入库。
+
+真机验证（`scripts/e2e_registry.py`，对 `ghcr.io/zjwan461/dsh-docker`）：
+
+```
+21 个标签 → 1 个版本标签 0.2.1-rc.5，1.28 GB，digest sha256:e63970e2…，created 2026-11-17T05:59:28Z
+docker pull 到入库 144s，页面状态变为「已导入」
+```
+
+修掉的 bug：`created` 一直为空 —— BuildKit 写 9 位纳秒，Python 3.11 的 `fromisoformat` 只接受 ≤6 位，`parse_timestamp()` 先截断再解析（有单测）。
+
+单元测试 12 条（`tests/test_registry.py`），全部用 `httpx.MockTransport`，不碰网络。
 
 ## 6. 下一步
 

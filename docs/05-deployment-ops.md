@@ -129,31 +129,47 @@ docker compose logs -f console-api     # 等 alembic upgrade head 完成、/read
 3. 若 `users` 为空，用 `BOOTSTRAP_ADMIN_*` 建管理员；
 4. 创建 `dsh-edge` 网络，并向 Caddy 下发全量配置（console + 已有实例路由）。
 
-## 4. 导入第一个 DSH 版本
+## 4. 导入 DSH 版本
 
-```bash
-# 1. 先把镜像拉到本机（控制台不负责 pull）
-docker pull ghcr.io/you/dsh:0.2.1-rc.5
+三种入口，都在管理端「版本」页：
 
-# 2. 在控制台「版本」页登记，或调 API（M2 的登记接口）
-curl -X POST https://console.dsh.example.com/api/v1/admin/images \
-  -H 'Content-Type: application/json' -b cookie.txt -H "X-CSRF-Token: $CSRF" \
-  -d '{"image_ref":"ghcr.io/you/dsh:0.2.1-rc.5","version":"0.2.1-rc.5",
-       "changelog":"首个版本","is_default":true}'
+| 方式 | 适用 | 行为 |
+|---|---|---|
+| **仓库版本（推荐）** | 机器能出网到 GHCR | 自动列出 `dsh-docker` 已发布的版本标签，一键导入（控制台执行 `docker pull`），可设为默认 |
+| **登记本机镜像** | 镜像已经 `docker pull` / `load` 到宿主 | 只登记引用并校验存在性 |
+| **导入 tar 包** | 离线环境 | 上传 `docker save` 产物，控制台执行 `docker load` 后登记 |
+
+### 4.1 自动发现新版本
+
+控制台把下面这个仓库当作「上游版本目录」，定时（默认 6 小时）和手动都会查一次：
+
+```ini
+DSH_IMAGE_REPOSITORY=ghcr.io/zjwan461/dsh-docker
 ```
 
-> M2 只做「登记本机已有镜像」；从 Registry 拉取、tar 上传、digest/签名校验在 M4 补齐。
-> 离线环境：`docker load < dsh.tar` 后再登记本地 tag。
+它走 Registry HTTP API（`/v2/...`）读 tags、manifest、config blob，因此**只读元数据、不拉镜像**：每个 tag 的大小（layers 之和）、digest、构建时间都能拿到，1 次检查约 1 秒。
 
-**镜像从哪来**：由 `dsh-docker` 的 CI（`build-image.yml`）构建并推 GHCR。控制台**只导入，不构建、不派生、不修改镜像**——包括 `login-gate` 的移除也在 `dsh-docker` 仓库里完成（控制台会把「镜像里还存在 `login-gate`」作为导入时的警告显示出来）。
+- 只把形如 `0.2.1-rc.5`、`v0.2.1`、`0.2.0-slim` 的标签算作版本；`latest`、`sha-*` 等**不算**（它们不是可比较的版本）。
+- 已导入的判定：先比完整引用（`ghcr.io/...:tag`），再退回比 `dsh_images.version`，所以手工登记的 `dsh:0.2.1-rc.5` 也会被认成「已导入」。
+- 默认分支的 `latest` 若指向比当前默认更新的版本，管理端顶部会提示「发现新版本」，可一键「导入并设为默认」。
+- 私有包：配 `REGISTRY_USERNAME` / `REGISTRY_PASSWORD`（GitHub PAT，需 `read:packages`）；公共包匿名即可。
+- 仓库不可达时**保留上次快照**并在页面标注错误，不会把列表清空。
+
+API：`GET /admin/images/remote[?refresh=true]`、`POST /admin/images/remote/check`、`POST /admin/images/remote/import`。
+
+> 实测：对 `ghcr.io/zjwan461/dsh-docker` 的检查在 1 秒内返回 21 个标签（其中 1 个版本标签），`docker pull` 该 1.28 GB 镜像约 144 秒。
+
+### 4.2 导入 tar 包（离线）
 
 ```bash
-# 在 dsh-docker 侧构建（版本号来自 .env.example 的 DSH_VERSION）
-docker build -t ghcr.io/you/dsh:0.2.1-rc.5 .
-docker push ghcr.io/you/dsh:0.2.1-rc.5
+# 在有网/有镜像的机器上导出
+docker save -o dsh-0.2.1-rc.5.tar ghcr.io/zjwan461/dsh-docker:0.2.1-rc.5
+# 管理端「版本 → 导入 tar 包」上传；上限 IMAGE_UPLOAD_MAX_MB（默认 8192）
 ```
 
-控制台导入后 `docker pull` 到本地；`docker save` 的 tar 只用于离线环境。
+控制台把 tar 写到 `DATA_ROOT/images/upload/`，交给 `docker load`，成功后删除临时文件。
+
+**镜像从哪来**：由 `dsh-docker` 的 CI（`build-image.yml`）构建并推 GHCR。控制台**只导入，不构建、不派生、不修改镜像**——包括 `login-gate` 的移除也在 `dsh-docker` 仓库里完成。
 
 ## 4.1 用 GitHub Actions 构建控制台镜像
 

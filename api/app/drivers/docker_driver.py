@@ -240,3 +240,15 @@ class DockerDriver:
                 self.client.images.pull(image_ref)
         except Exception as exc:
             raise DriverError(f"docker pull failed: {exc}") from exc
+
+    def load_image(self, path: str) -> list[str]:
+        try:
+            with open(path, "rb") as fh, self._long_op(settings.docker_pull_timeout):
+                output = self.client.images.load(fh)
+        except Exception as exc:
+            raise DriverError(f"docker load failed: {exc}") from exc
+        refs: list[str] = []
+        for image in output or []:
+            for tag in image.get("RepoTags") or []:
+                refs.append(tag)
+        return refs

@@ -160,5 +160,12 @@ def reconcile_once(db: Session) -> dict:
     return reconcile(db)
 
 
+def registry_once(db: Session) -> dict:
+    """Watch the upstream image repository for new dsh builds."""
+    from . import image_catalog
+
+    return image_catalog.check_once(db)
+
+
 def flush_once(db: Session) -> dict:
     return metering.flush(db)

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.exc import IntegrityError
+import os
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from ..audit import write_audit
+from ..config import settings
 from ..db import get_db
 from ..deps import csrf_guard, require_admin
 from ..drivers import DriverError, get_driver
 from ..errors import ApiError, envelope
 from ..models import DshImage, ImageStatus, Instance, User
-from ..schemas import ImagePatchIn, ImageRegisterIn
+from ..schemas import ImagePatchIn, ImageRegisterIn, RemoteImportIn
 from ..services import caddy
+from ..services import image_catalog as catalog
 
 router = APIRouter(
     prefix="/admin/images", tags=["admin:images"], dependencies=[Depends(csrf_guard)]
@@ -52,36 +55,21 @@ def pull_image(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if db.query(DshImage.id).filter(DshImage.image_ref == payload.image_ref).first():
-        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409)
     try:
         get_driver().pull(payload.image_ref)
         info = get_driver().image_info(payload.image_ref)
     except DriverError as exc:
         raise ApiError("IMAGE_IMPORT_FAILED", str(exc), 422) from exc
-    if payload.is_default:
-        db.query(DshImage).filter(DshImage.is_default.is_(True)).update(
-            {DshImage.is_default: False}
-        )
-    image = DshImage(
-        version=payload.version,
+    image = catalog.register(
+        db,
         image_ref=payload.image_ref,
-        digest=info.get("digest"),
-        size_bytes=info.get("size", 0),
-        arch=info.get("arch", "amd64"),
-        source="pull",
-        status=ImageStatus.ready,
-        is_default=payload.is_default,
+        version=payload.version,
         changelog=payload.changelog,
-        labels=info.get("labels"),
-        created_by=admin.id,
+        is_default=payload.is_default,
+        source="pull",
+        info=info,
+        actor_id=admin.id,
     )
-    db.add(image)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409) from None
     write_audit(db, request, admin, "admin.image_pull", "image", image.id, {"ref": image.image_ref})
     db.commit()
     return envelope(request, image_dict(image))
@@ -94,37 +82,132 @@ def register_image(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if db.query(DshImage.id).filter(DshImage.image_ref == payload.image_ref).first():
-        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409)
     try:
         info = get_driver().image_info(payload.image_ref)
     except DriverError as exc:
         raise ApiError("IMAGE_IMPORT_FAILED", str(exc), 422) from exc
-    if payload.is_default:
-        db.query(DshImage).filter(DshImage.is_default.is_(True)).update(
-            {DshImage.is_default: False}
-        )
-    image = DshImage(
-        version=payload.version,
+    image = catalog.register(
+        db,
         image_ref=payload.image_ref,
-        digest=info.get("digest"),
-        size_bytes=info.get("size", 0),
-        arch=info.get("arch", "amd64"),
-        source="pull",
-        status=ImageStatus.ready,
-        is_default=payload.is_default,
+        version=payload.version,
         changelog=payload.changelog,
-        labels=info.get("labels"),
-        created_by=admin.id,
+        is_default=payload.is_default,
+        source="local",
+        info=info,
+        actor_id=admin.id,
     )
-    db.add(image)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409) from None
     write_audit(
         db, request, admin, "admin.image_register", "image", image.id, {"ref": image.image_ref}
+    )
+    db.commit()
+    return envelope(request, image_dict(image))
+
+
+@router.get("/remote")
+def remote_images(
+    request: Request,
+    refresh: bool = False,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Published tags from the dsh-docker registry, merged with what we have."""
+    return envelope(request, catalog.catalog(db, refresh=refresh))
+
+
+@router.post("/remote/check")
+def check_remote(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    result = catalog.catalog(db, refresh=True)
+    write_audit(
+        db,
+        request,
+        admin,
+        "admin.image_check_registry",
+        "image_catalog",
+        result.get("repository", ""),
+        {"tags": len(result.get("items") or []), "error": result.get("error")},
+    )
+    db.commit()
+    return envelope(request, result)
+
+
+@router.post("/remote/import", status_code=201)
+def import_remote(
+    payload: RemoteImportIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    image = catalog.import_tag(
+        db, payload.tag, is_default=payload.is_default, changelog=payload.changelog
+    )
+    write_audit(
+        db,
+        request,
+        admin,
+        "admin.image_import_remote",
+        "image",
+        image.id,
+        {"tag": payload.tag, "ref": image.image_ref},
+    )
+    db.commit()
+    # Refresh so the page immediately shows the tag as imported.
+    catalog.catalog(db, refresh=True)
+    return envelope(request, image_dict(image))
+
+
+@router.post("/upload", status_code=201)
+def upload_image(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    version: str = Form(default=""),
+    changelog: str = Form(default=""),
+    is_default: bool = Form(default=False),
+):
+    """Import a `docker save` tarball.
+
+    The tar is written to DATA_ROOT and handed to the daemon by the API container;
+    the file is removed afterwards. Big files therefore need room under
+    IMAGE_UPLOAD_MAX_MB, and the request itself is streamed.
+    """
+    limit = settings.image_upload_max_mb * 1024 * 1024
+    path = catalog.staging_path()
+    size = 0
+    try:
+        with open(path, "wb") as out:
+            while chunk := file.file.read(4 * 1024 * 1024):
+                size += len(chunk)
+                if size > limit:
+                    raise ApiError(
+                        "FILE_TOO_LARGE",
+                        f"tar 包超过上限（{settings.image_upload_max_mb} MB）",
+                        413,
+                    )
+                out.write(chunk)
+        image = catalog.import_tar(
+            db,
+            path,
+            version=version,
+            changelog=changelog,
+            is_default=is_default,
+            actor_id=admin.id,
+        )
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+    write_audit(
+        db,
+        request,
+        admin,
+        "admin.image_import_tar",
+        "image",
+        image.id,
+        {"ref": image.image_ref, "bytes": size},
     )
     db.commit()
     return envelope(request, image_dict(image))

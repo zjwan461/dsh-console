@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     docker_timeout: int = 300
     docker_commit_timeout: int = 1800
     docker_pull_timeout: int = 3600
+
+    # ── published image catalogue (M6) ───────────────────────────────────
+    # The console watches this repository for new dsh builds. It is a registry
+    # reference (host/owner/repo), not a docker image on the local host.
+    dsh_image_repository: str = "ghcr.io/zjwan461/dsh-docker"
+    # Which platform manifest to inspect for size/created metadata.
+    dsh_image_platform: str = "amd64"
+    # Credentials for a private package; empty means anonymous (public packages).
+    registry_username: str = ""
+    registry_password: str = ""
+    registry_check_enabled: bool = True
+    registry_check_interval_hours: int = 6
+    # Upload limit for `docker save` tarballs (they are gigabytes).
+    image_upload_max_mb: int = 8192
     instance_network: str = "dsh-edge"
     instance_uid: int = 1000
     instance_gid: int = 1000

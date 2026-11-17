@@ -81,6 +81,16 @@ async def main() -> None:
         )
     if settings.caddy_access_log_enabled:
         tasks.append(asyncio.create_task(log_collector.serve()))
+    if settings.registry_check_enabled:
+        tasks.append(
+            asyncio.create_task(
+                every(
+                    settings.registry_check_interval_hours * 3600,
+                    "registry",
+                    worker_tasks.registry_once,
+                )
+            )
+        )
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

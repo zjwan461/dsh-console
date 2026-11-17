@@ -7,13 +7,15 @@
 - 用户登录控制台 → 看到自己的 harness 实例 → 一键启停 / 进入 / 看用量 / 存快照；
 - 管理员维护 DSH 镜像版本、分配套餐与时长、看全机与全站监控。
 
+**版本自动发现**：控制台直接读 `ghcr.io/zjwan461/dsh-docker` 的 registry 元数据（tag / digest / 大小 / 构建时间，**不拉镜像**），发现新构建后一键导入并设为默认；离线环境仍可导入 `docker save` 的 tar 包。
+
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。
 
-> **当前状态：M1–M5 已完成，并在真实环境跑通端到端回归。**
+> **当前状态：M1–M5 已完成并在真实环境跑通端到端回归；版本自动发现已上线。**
 >
-> - 功能：认证/用户/套餐/配额/审计、实例生命周期与 Caddy 路由、计量/休眠/配额扣减、快照/镜像/版本切换、文件管理、管理员终端、监控大盘、公告/工单。
-> - 验证：单元测试 17 条（SQLite + fakeredis + FakeDriver）；真机回归脚本 `scripts/e2e_remote.py`（Docker 29 + MySQL 8 + Redis 7）与 `scripts/e2e_terminal.py`，结果见 [路线图 §5](docs/06-roadmap.md)。
-> - 真机回归修掉的 5 个 bug（Caddy 日志配置、`/go` 路由、实例锁、commit 超时、WS 鉴权）也记录在路线图里。
+> - 功能：认证/用户/套餐/配额/审计、实例生命周期与 Caddy 路由、计量/休眠/配额扣减、快照/镜像/版本切换、文件管理、管理员终端、监控大盘、公告/工单、GHCR 版本发现与 tar 导入。
+> - 验证：单元测试 29 条（SQLite + fakeredis + FakeDriver + 假 registry）；真机回归 `scripts/e2e_remote.py`、`scripts/e2e_terminal.py`、`scripts/e2e_registry.py`，结果见 [路线图 §5](docs/06-roadmap.md)。
+> - 真机回归修掉的 bug（Caddy 日志配置、`/go` 路由、实例锁、commit 超时、WS 鉴权、容量降级）记录在路线图里。
 
 ## 快速开始（Docker）
 

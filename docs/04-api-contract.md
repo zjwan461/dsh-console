@@ -457,7 +457,51 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 
 ### GET `/admin/images`
 
-### POST `/admin/images/pull`（M3+ 已实现）
+### GET `/admin/images/remote[?refresh=true]`
+
+Published tags from the watched registry, merged with local state:
+
+```json
+{ "data": {
+  "repository": "ghcr.io/zjwan461/dsh-docker",
+  "checked_at": "2026-11-17T07:08:33.128154Z",
+  "latest_version": "0.2.1-rc.5",
+  "latest_tag": "0.2.1-rc.5",
+  "current_version": "0.2.1-rc.5",
+  "update_available": false,
+  "stale": false,
+  "items": [
+    { "tag": "0.2.1-rc.5", "version": "0.2.1-rc.5", "variant": "full",
+      "digest": "sha256:e63970e2…", "platform_digest": "sha256:5d1ec453…",
+      "size_bytes": 1378873344, "created_at": "2026-11-17T05:59:28.166507Z",
+      "platform": "linux/amd64",
+      "imported": true, "matched_by": "version", "image_id": 3,
+      "status": "ready", "is_default": true }
+  ]
+}}
+```
+
+- `refresh=true` 绕过缓存；否则按 `REGISTRY_CHECK_INTERVAL_HOURS` 复用快照。
+- 仓库不可达时返回上次快照并带 `error` / `stale: true`，不返回 5xx。
+
+### POST `/admin/images/remote/check`
+
+强制刷新（等同 `refresh=true`），写审计。`200`。
+
+### POST `/admin/images/remote/import`
+
+```json
+{ "tag": "0.2.1-rc.5", "is_default": true, "changelog": "可选" }
+```
+
+`201` 返回镜像记录；`409 IMAGE_DUPLICATE`（该引用已导入）；`422 IMAGE_IMPORT_FAILED`（pull 失败）。
+
+### POST `/admin/images/upload`
+
+`multipart/form-data`：`file`（`docker save` 的 tar）、`version`（可选）、`changelog`（可选）、`is_default`（可选）。
+`201` 返回镜像记录；`413 FILE_TOO_LARGE`；`422 IMAGE_IMPORT_FAILED`。
+
+### POST `/admin/images/pull`
 
 ```json
 { "image_ref": "ghcr.io/acme/dsh:0.2.1-rc.5", "version": "0.2.1-rc.5",
@@ -465,13 +509,7 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 ```
 
 `201` 返回镜像记录；`409 IMAGE_DUPLICATE`；`422 IMAGE_IMPORT_FAILED`。
-另有 `POST /admin/images` 只登记本机已有镜像（不 pull）。tar 上传在后续版本提供。
-
-### 上传 tar（规划）
-
-1. `POST /admin/images/uploads` `{ "filename": "dsh.tar", "size": 123 }` → `{ upload_id, chunk_size }`
-2. `PUT /admin/images/uploads/{upload_id}?offset=` 分片
-3. `POST /admin/images/uploads/{upload_id}/complete` `{ "version": "...", "sha256": "..." }` → `202`
+另有 `POST /admin/images` 只登记本机已有镜像（不 pull）。
 
 ### PATCH `/admin/images/{id}`
 

@@ -9,6 +9,8 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "console_name": "优墨云舱",
     "default_plan_id": None,
     "default_image_id": None,
+    # Registry the console watches for new dsh builds (host/owner/repo).
+    "dsh_image_repository": "ghcr.io/zjwan461/dsh-docker",
     "default_idle_minutes": 30,
     "allow_user_version_switch": True,
     "allow_user_self_key": True,

@@ -139,3 +139,12 @@ class FakeDriver:
     def pull(self, image_ref: str) -> None:
         if not image_ref:
             raise DriverError("empty image ref")
+
+    def load_image(self, path: str) -> list[str]:
+        import os
+
+        if not os.path.exists(path):
+            raise DriverError(f"no such tarball: {path}")
+        # The fake treats the file name as the loaded reference so tests can
+        # assert on what the daemon reported.
+        return [os.path.basename(path).removesuffix(".tar")]

@@ -148,6 +148,12 @@ class ImagePatchIn(BaseModel):
     changelog: str | None = Field(default=None, max_length=2000)
 
 
+class RemoteImportIn(BaseModel):
+    tag: str = Field(min_length=1, max_length=64)
+    is_default: bool = False
+    changelog: str = Field(default="", max_length=2000)
+
+
 class SnapshotCreateIn(BaseModel):
     note: str = Field(default="", max_length=200)
 
@@ -207,6 +213,7 @@ class SettingsIn(BaseModel):
     snapshot_retention_days: int | None = Field(default=None, ge=1, le=3650)
     deleted_user_retention_days: int | None = Field(default=None, ge=1, le=3650)
     upload_max_mb: int | None = Field(default=None, ge=1, le=10240)
+    dsh_image_repository: str | None = Field(default=None, max_length=190)
     admin_terminal_enabled: bool | None = None
     maintenance_mode: bool | None = None
     maintenance_message: str | None = Field(default=None, max_length=500)
