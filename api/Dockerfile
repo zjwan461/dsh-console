@@ -11,9 +11,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl \
  && rm -rf /var/lib/apt/lists/*
 
+# Mirrors can be injected at build time for networks without direct PyPI access:
+#   docker build --build-arg PIP_INDEX_URL=https://repo.huaweicloud.com/repository/pypi/simple .
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install .
+RUN pip install --index-url "$PIP_INDEX_URL" .
 
 COPY alembic.ini ./
 COPY alembic ./alembic

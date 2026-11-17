@@ -36,6 +36,9 @@ x-api-env: &api-env
   STATS_INTERVAL_SECONDS: ${STATS_INTERVAL_SECONDS:-30}
   USAGE_FLUSH_SECONDS: ${USAGE_FLUSH_SECONDS:-60}
   IDLE_CHECK_SECONDS: ${IDLE_CHECK_SECONDS:-60}
+  DOCKER_TIMEOUT: ${DOCKER_TIMEOUT:-300}
+  DOCKER_COMMIT_TIMEOUT: ${DOCKER_COMMIT_TIMEOUT:-1800}
+  DOCKER_PULL_TIMEOUT: ${DOCKER_PULL_TIMEOUT:-3600}
 
 services:
   mysql:
@@ -75,6 +78,8 @@ services:
   console-api:
     build:
       context: ./api
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     restart: unless-stopped
     environment:
       <<: *api-env

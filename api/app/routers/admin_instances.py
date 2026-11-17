@@ -22,6 +22,7 @@ from ..drivers import DriverError, get_driver
 from ..errors import ApiError, envelope
 from ..models import DshImage, Instance, InstanceStatus, Role, User, UserSession
 from ..services.instances import (
+    acquire_lock,
     delete_instance,
     instance_view,
     restart_instance,
@@ -32,6 +33,28 @@ from ..services.instances import (
 router = APIRouter(
     prefix="/admin/instances", tags=["admin:instances"], dependencies=[Depends(csrf_guard)]
 )
+# WebSocket routes cannot carry the HTTP CSRF dependency: FastAPI would pass a
+# WebSocket where csrf_guard expects a Request, which fails the handshake with a
+# 500. The terminal endpoint authenticates by cookie instead.
+ws_router = APIRouter(prefix="/admin/instances", tags=["admin:instances"])
+
+
+async def _safe_receive(ws: WebSocket) -> dict | None:
+    """Receive one message, returning None once the peer is gone.
+
+    Starlette raises WebSocketDisconnect on the first post-close receive and a
+    bare RuntimeError ("Cannot call receive once a disconnect message has been
+    received") on any later one, so both must be handled.
+    """
+    try:
+        message = await ws.receive()
+    except WebSocketDisconnect:
+        return None
+    except RuntimeError:
+        return None
+    if message.get("type") == "websocket.disconnect":
+        return None
+    return message
 
 
 def _schedule(background: BackgroundTasks, fn, *args, **kwargs) -> None:
@@ -99,7 +122,8 @@ def start(
         raise ApiError("INSTANCE_NOT_FOUND", "实例不存在", 404)
     write_audit(db, request, admin, "admin.instance_start", "instance", instance.id)
     db.commit()
-    _schedule(background, start_instance, instance.id, admin.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, start_instance, instance.id, admin.id, prelocked=True)
     return envelope(request, {"status": "starting"})
 
 
@@ -116,7 +140,10 @@ def stop(
         raise ApiError("INSTANCE_NOT_FOUND", "实例不存在", 404)
     write_audit(db, request, admin, "admin.instance_stop", "instance", instance.id)
     db.commit()
-    _schedule(background, stop_instance, instance.id, sleep=False, actor_id=admin.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(
+        background, stop_instance, instance.id, sleep=False, actor_id=admin.id, prelocked=True
+    )
     return envelope(request, {"status": "stopping"})
 
 
@@ -133,7 +160,8 @@ def restart(
         raise ApiError("INSTANCE_NOT_FOUND", "实例不存在", 404)
     write_audit(db, request, admin, "admin.instance_restart", "instance", instance.id)
     db.commit()
-    _schedule(background, restart_instance, instance.id, admin.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, restart_instance, instance.id, admin.id, prelocked=True)
     return envelope(request, {"status": "starting"})
 
 
@@ -171,7 +199,7 @@ def logs(
     return envelope(request, {"lines": text.splitlines()[-tail:]})
 
 
-@router.websocket("/{instance_id}/terminal")
+@ws_router.websocket("/{instance_id}/terminal")
 async def terminal(ws: WebSocket, instance_id: int):
     sid = ws.cookies.get(settings.cookie_name)
     user_id = None
@@ -197,13 +225,12 @@ async def terminal(ws: WebSocket, instance_id: int):
     driver = get_driver()
     if settings.docker_fake:
         await ws.send_text("FakeDriver terminal: 输入任意命令会原样回显。\r\n")
-        try:
-            while True:
-                message = await ws.receive()
-                if message.get("text"):
-                    await ws.send_text(f"$ {message['text']}")
-        except WebSocketDisconnect:
-            return
+        while True:
+            message = await _safe_receive(ws)
+            if message is None:
+                return
+            if message.get("text"):
+                await ws.send_text(f"$ {message['text']}")
 
     try:
         container = driver.client.containers.get(container_id)
@@ -223,7 +250,9 @@ async def terminal(ws: WebSocket, instance_id: int):
 
     async def pump_input() -> None:
         while True:
-            message = await ws.receive()
+            message = await _safe_receive(ws)
+            if message is None:
+                return
             if message.get("bytes"):
                 await asyncio.to_thread(raw.sendall, message["bytes"])
             elif message.get("text") is not None:

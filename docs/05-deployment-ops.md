@@ -251,6 +251,12 @@ docker compose logs -f console-api | grep -E 'alembic|ready'
 | 启动卡在 `alembic` | MySQL 未健康；`docker compose logs mysql` |
 | 中文乱码 | 数据库/连接必须是 `utf8mb4`；本仓库 DDL 已指定 |
 | 时间偏差 | 容器 `TZ=Asia/Shanghai`；DB 存 UTC，展示转本地 |
+| 点「打开」后停在登录页 | Caddy 的 console 站点必须把 `/go/*`、`/w/*` 反代给 API；只代理 `/api/*` 时 SPA 会吃掉这两个路径（返回 200 的 index.html 而不是 302） |
+| 用户子域名 404 / 空白 200 | 用 IP 访问时 Host 匹配不到站点，属正常：必须用子域名，或带 `Host: console.<域名>` 头 |
+| 停止/启动返回 409 `INSTANCE_BUSY` | 该实例正有操作在进行（快照恢复后会先重启）。前端应重试，这是预期语义，不是失败 |
+| `docker commit` 报 `content digest ... not found` | 宿主镜像存储缺 blob（本机实测 `dsh` 镜像如此，其他镜像正常）。修复：`docker save <image> \| docker load` 重新入库 |
+| `docker commit`/`pull` 超时 | 大镜像远超默认超时；已由 `DOCKER_COMMIT_TIMEOUT`(1800s)/`DOCKER_PULL_TIMEOUT`(3600s) 覆盖，可再调大 |
+| 终端 500 / 握手失败 | WebSocket 路由不能挂 HTTP 的 CSRF 依赖；`ws_router` 单独注册，靠 cookie 鉴权 |
 
 ## 10. 安全清单（上线前逐项）
 

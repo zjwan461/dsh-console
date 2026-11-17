@@ -205,8 +205,19 @@ def clear_token(instance_id: int) -> None:
         pass
 
 
-def _lock(instance_id: int):
-    return get_redis().set(f"lock:instance:{instance_id}", "1", nx=True, ex=300)
+def _lock(instance_id: int) -> bool:
+    """Take the per-instance operation lock.
+
+    Fails OPEN when Redis is unavailable: dropping a user's stop/start because the
+    cache blipped is worse than occasionally running two operations, and the lock
+    is a serialisation aid, not a safety boundary. (A closed failure here was
+    observed to swallow stop requests silently.)
+    """
+    try:
+        return bool(get_redis().set(f"lock:instance:{instance_id}", "1", nx=True, ex=300))
+    except Exception:
+        log.warning("instance lock unavailable; proceeding unlocked", exc_info=True)
+        return True
 
 
 def _unlock(instance_id: int) -> None:
@@ -214,6 +225,21 @@ def _unlock(instance_id: int) -> None:
         get_redis().delete(f"lock:instance:{instance_id}")
     except Exception:
         pass
+
+
+def acquire_lock(instance_id: int, status: str) -> None:
+    """Lock from the request handler so a busy instance yields 409, not a no-op."""
+    if not _lock(instance_id):
+        raise ApiError(
+            "INSTANCE_BUSY",
+            "实例正在执行其他操作，请稍后重试",
+            409,
+            {"status": status},
+        )
+
+
+def _try_lock(instance_id: int) -> bool:
+    return _lock(instance_id)
 
 
 def create_instance(
@@ -264,11 +290,11 @@ def create_instance(
     return instance
 
 
-def provision(instance_id: int) -> None:
+def provision(instance_id: int, *, prelocked: bool = False) -> None:
     """Create/start the container and publish the route. Runs outside the request."""
     from ..db import SessionLocal
 
-    if not _lock(instance_id):
+    if not prelocked and not _lock(instance_id):
         return
     db = SessionLocal()
     try:
@@ -314,10 +340,12 @@ def provision(instance_id: int) -> None:
         _unlock(instance_id)
 
 
-def start_instance(instance_id: int, actor_id: int | None = None) -> None:
+def start_instance(
+    instance_id: int, actor_id: int | None = None, *, prelocked: bool = False
+) -> None:
     from ..db import SessionLocal
 
-    if not _lock(instance_id):
+    if not prelocked and not _lock(instance_id):
         return
     db = SessionLocal()
     try:
@@ -387,10 +415,11 @@ def stop_instance(
     sleep: bool = False,
     actor_id: int | None = None,
     reason: str | None = None,
+    prelocked: bool = False,
 ) -> None:
     from ..db import SessionLocal
 
-    if not _lock(instance_id):
+    if not prelocked and not _lock(instance_id):
         return
     db = SessionLocal()
     try:
@@ -437,10 +466,12 @@ def stop_instance(
         _unlock(instance_id)
 
 
-def restart_instance(instance_id: int, actor_id: int | None = None) -> None:
+def restart_instance(
+    instance_id: int, actor_id: int | None = None, *, prelocked: bool = False
+) -> None:
     from ..db import SessionLocal
 
-    if not _lock(instance_id):
+    if not prelocked and not _lock(instance_id):
         return
     db = SessionLocal()
     try:

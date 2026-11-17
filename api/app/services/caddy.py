@@ -25,7 +25,11 @@ def _console_routes(console_host: str) -> dict:
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{"path": ["/api/*", "/ws/*"]}],
+                        # /go (launch ticket) and /w (wake page) are served by the
+                        # API, not by the SPA. Missing them here made the console
+                        # serve index.html for a launch ticket (200 instead of the
+                        # 302 that injects the DSH token).
+                        "match": [{"path": ["/api/*", "/ws/*", "/go/*", "/w/*"]}],
                         "handle": [
                             {
                                 "handler": "reverse_proxy",
@@ -101,6 +105,7 @@ def _instance_route(instance: Instance, base_domain: str) -> dict:
 def build_config(db: Session, base_domain: str | None = None) -> dict:
     domain = base_domain or str(get_setting(db, "base_domain", settings.base_domain))
     console_host = f"console.{domain}"
+    listen_port = settings.caddy_listen_port or (443 if settings.public_scheme == "https" else 80)
     instances = (
         db.query(Instance)
         .filter(Instance.status != InstanceStatus.deleted)
@@ -117,43 +122,48 @@ def build_config(db: Session, base_domain: str | None = None) -> dict:
         }
     )
     server: dict = {
-        "listen": [":443"],
+        # Plain HTTP deployments (PUBLIC_SCHEME=http) listen on :80 and skip TLS
+        # automation entirely; that is how the stack is exercised over an IP.
+        "listen": [f":{listen_port}"],
         "routes": routes,
     }
+    config: dict = {
+        "admin": {"listen": "0.0.0.0:2019"},
+        "apps": {"http": {"servers": {"srv0": server}}},
+    }
     if settings.caddy_access_log_enabled:
-        server["logs"] = {
-            "default_logger_name": "access",
+        # Log writers live in the TOP-LEVEL `logging.logs` map; the server only
+        # names the logger it uses. Putting a `logs` key on the server or on the
+        # http app is rejected by Caddy with `unknown field "logs"` (this exact
+        # shape was verified against Caddy 2.8/2.9 with `caddy adapt`).
+        logger = "access"
+        server["logs"] = {"default_logger_name": logger}
+        config["logging"] = {
             "logs": {
-                "access": {
+                "default": {"exclude": [f"http.log.access.{logger}"]},
+                logger: {
                     "writer": {
                         "output": "net",
                         "address": f"console-worker:{settings.caddy_log_port}",
                     },
                     "encoder": {"format": "json"},
                     "level": "INFO",
-                }
-            },
+                    "include": [f"http.log.access.{logger}"],
+                },
+            }
         }
-    return {
-        "admin": {"listen": "0.0.0.0:2019"},
-        "apps": {
-            "http": {
-                "servers": {
-                    "srv0": server,
-                }
-            },
-            "tls": {
-                "automation": {
-                    "policies": [
-                        {
-                            "subjects": [f"*.{domain}", console_host],
-                            "issuers": [{"module": "internal"}],
-                        }
-                    ]
-                }
-            },
-        },
-    }
+    if settings.public_scheme == "https":
+        config["apps"]["tls"] = {
+            "automation": {
+                "policies": [
+                    {
+                        "subjects": [f"*.{domain}", console_host],
+                        "issuers": [{"module": "internal"}],
+                    }
+                ]
+            }
+        }
+    return config
 
 
 def apply(db: Session) -> None:

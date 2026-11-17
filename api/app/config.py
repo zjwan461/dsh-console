@@ -49,12 +49,20 @@ class Settings(BaseSettings):
     host_data_root: str = "/srv/dsh-console/data"
     docker_host: str = "unix:///var/run/docker.sock"
     docker_fake: bool = False
+    # Default HTTP timeout for daemon calls, and longer budgets for the two
+    # operations that legitimately take minutes on multi-GB images.
+    docker_timeout: int = 300
+    docker_commit_timeout: int = 1800
+    docker_pull_timeout: int = 3600
     instance_network: str = "dsh-edge"
     instance_uid: int = 1000
     instance_gid: int = 1000
     instance_shm_mb: int = 512
     instance_pids_limit: int = 4096
     public_scheme: str = "https"
+    # Caddy's listener. Unset => derived from public_scheme (443 / 80), so the two
+    # can never disagree.
+    caddy_listen_port: int | None = None
     caddy_admin_url: str = "http://console-web:2019"
     caddy_enabled: bool = True
     caddy_access_log_enabled: bool = True

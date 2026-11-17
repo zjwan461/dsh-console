@@ -9,9 +9,11 @@
 
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。
 
-> **当前状态：M3–M5 已落地。** M1 认证/用户/套餐/配额/审计，M2 实例生命周期与 Caddy 路由，M3 计量/休眠/配额扣减 + worker，M4 快照/用户镜像/版本切换，M5 文件管理、管理员终端、监控大盘、公告/工单。
+> **当前状态：M1–M5 已完成，并在真实环境跑通端到端回归。**
 >
-> 代码与单元测试已完成；真实 Docker/MySQL/Redis 回归待远端环境（`DOCKER_HOST` + `DATABASE_URL` + `REDIS_URL`）。
+> - 功能：认证/用户/套餐/配额/审计、实例生命周期与 Caddy 路由、计量/休眠/配额扣减、快照/镜像/版本切换、文件管理、管理员终端、监控大盘、公告/工单。
+> - 验证：单元测试 17 条（SQLite + fakeredis + FakeDriver）；真机回归脚本 `scripts/e2e_remote.py`（Docker 29 + MySQL 8 + Redis 7）与 `scripts/e2e_terminal.py`，结果见 [路线图 §5](docs/06-roadmap.md)。
+> - 真机回归修掉的 5 个 bug（Caddy 日志配置、`/go` 路由、实例锁、commit 超时、WS 鉴权）也记录在路线图里。
 
 ## 快速开始（Docker）
 
@@ -51,7 +53,29 @@ npm run dev          # http://127.0.0.1:5173，/api 代理到 :8000
 
 - `ENV=dev` 时自动 `create_all`，不需要 Alembic；生产由容器 entrypoint 跑 `alembic upgrade head`。
 - `REDIS_FAKE=1` 使用进程内 fakeredis，登录限流与会话不受影响。
+- 计量与休眠需要 worker：另开终端 `python -m app.worker`（同样环境变量，本地加 `CADDY_ACCESS_LOG_ENABLED=0`）。
 - 接口文档：`http://127.0.0.1:8000/api/docs`。
+
+## 真机回归脚本
+
+`scripts/` 下是可复现的远端验证工具（不依赖本地 Docker）。**所有主机信息都从环境变量读取，仓库里不含任何 IP、端口或口令。**
+
+```bash
+cp scripts/.remote.env.example scripts/.remote.env   # 该文件已被 .gitignore 忽略
+$EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL/Redis/域名
+```
+
+| 脚本 | 作用 |
+|---|---|
+| `provision_remote.py` | 建网络 `dsh-console` / `dsh-edge`、数据目录、专用 Redis |
+| `build_remote.py` | 把 `api/` 与 `web/dist` 打成 tar 流，在远端 daemon 构建镜像 |
+| `deploy_remote.py` | 起/更新 `console-api`、`console-worker`、`console-web`（纯 HTTP 模式，便于用 IP 验收） |
+| `e2e_remote.py` | 端到端回归：容器资源限制、dsh 探活、token 302、计量落库、快照往返、文件越界、wake 页、停机/启动 |
+| `e2e_terminal.py` | 管理员 WebSocket 终端（真实 `docker exec`） |
+| `remote_exec.py` | 在远端容器里跑一段本地 Python 文件（排障用） |
+| `clear_login_limit.py` | 清掉 Redis 里的 `rl:login:*`（回归脚本反复登录会触发限流） |
+
+> 回归脚本每次运行都会真实登录，`LOGIN_RATE_PER_HOUR` 很容易打满；被限流时先跑 `clear_login_limit.py`，或临时调大该变量。
 
 ## 技术栈（已确认）
 
@@ -59,7 +83,7 @@ npm run dev          # http://127.0.0.1:5173，/api 代理到 :8000
 |---|---|---|
 | 前端 | Vue 3 + TypeScript + Vite + Pinia + Vue Router + Element Plus + ECharts | 控制台 SPA；监控图用 ECharts |
 | 后端 | Python 3.12 + FastAPI + SQLAlchemy 2 + Alembic + Pydantic v2 | 同步 SQLAlchemy（线程池执行）；docker-py 走 unix socket |
-| 任务 | ARQ（Redis 队列）+ 进程内 cron | 生命周期、计量、快照、休眠扫描 |
+| 任务 | `console-worker`（asyncio 常驻循环） | 计量采样/落库、休眠、配额、节点指标、Caddy 日志采集。未引入 ARQ：任务都是周期性的，换队列不影响业务层 |
 | 数据库 | MySQL 8.4 | 业务数据；utf8mb4 |
 | 缓存/队列 | Redis 7 | 会话、token 缓存、计数器、分布式锁、ARQ |
 | 容器 | Docker Engine API（`/var/run/docker.sock`） | 单机；后期换 K8s 时加 Driver |

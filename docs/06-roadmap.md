@@ -172,13 +172,30 @@
 | 20 | 注册后行为 | 进入创建向导，不自动建实例 | 01 US-02、07 §4.2 |
 | 21 | 平台 Key 风险 | 一期接受（仅可信用户 + 消费上限 + 审计）；网关列 1.5 期第一项 | 02 §9、§2.2、R-01 |
 
-## 5. 下一步
+## 5. 真机回归（2026-11-17，远端主机）
 
-M1 已交付，下一步 M2：
+M3–M5 完成后在真实 Docker（Engine 29.6.2 / API 1.55）+ MySQL 8.0.39 + Redis 7 上跑通全链路，脚本见 `scripts/e2e_remote.py`、`scripts/e2e_terminal.py`。
 
-1. DockerDriver + 容量探测；
-2. 实例创建/启停/删除 + Caddy 全量配置；
-3. token 注入与 `/go/{ticket}`；
-4. 前端实例卡片与创建向导。
+**结果：全部通过**（1 项因宿主镜像存储问题跳过）。
 
-远程 Docker 环境就绪后，用 `DOCKER_HOST` 指向它即可联调；本地仍用 SQLite + fakeredis 跑控制面。
+真机测试发现并修复的 **5 个 bug**（都是本地 FakeDriver 测不出来的）：
+
+| # | 问题 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | Caddy 拒绝整份配置（400） | 访问日志写在了 `servers.<name>.logs`；正确位置是**顶层** `logging.logs`，server 只声明 `default_logger_name` | `services/caddy.py` 按 `caddy adapt` 的实际结构生成；新增 `tests/test_caddy.py` 锁住形状 |
+| 2 | 点「打开」回到登录页 | `/go/{ticket}`、`/w/{wake_key}` 注册在 `/api/v1` 前缀下，而 Caddy 与 launch URL 用根路径 → 被 SPA 兜底成 200 index.html | 公共入口路由挂到根（`app.include_router(instances.public_router)`），Caddy console 站点显式反代 `/go/*`、`/w/*` |
+| 3 | 停止/启动偶发「返回 202 但什么都没发生」 | 后台任务抢不到实例锁时直接 `return`，请求已回 202 | 锁改为**请求内获取**：拿不到返回 `409 INSTANCE_BUSY`；Redis 故障时 **fail-open**（宁可并发也不要吞操作） |
+| 4 | 大镜像 `docker commit` 必失败 | docker-py 默认 30s 超时，28 层约 2GB 镜像远超 | `DOCKER_TIMEOUT=300` / `DOCKER_COMMIT_TIMEOUT=1800` / `DOCKER_PULL_TIMEOUT=3600` |
+| 5 | 管理员终端握手 500 | WebSocket 路由继承了 HTTP 的 `csrf_guard` 依赖（`csrf_guard` 需要 `Request`，拿到的是 `WebSocket`）；且断开后再次 `receive()` 抛 `RuntimeError` 而非 `WebSocketDisconnect` | 终端单独用 `ws_router`（cookie 鉴权）；新增 `_safe_receive()` 统一处理断开 |
+
+**已知环境限制**：`dsh:0.2.1-rc.5` 在这台宿主上 `docker commit` 报 `content digest ... not found`（同宿主 redis / console-api 等镜像 commit 均正常），属宿主镜像存储缺 blob；修复命令 `docker save dsh:0.2.1-rc.5 | docker load`。用户镜像功能代码路径由单测（FakeDriver）与其它镜像的 commit 验证覆盖。
+
+> **仓库卫生**：回归脚本里的主机地址、端口、数据库口令全部改为环境变量（`scripts/_remote.py` + git-ignored 的 `scripts/.remote.env`）。此前一次提交曾硬编码过一台测试机的 IP，该提交已被 amend 覆盖并 `reflog expire` + `gc --prune=now` 清除，当前对象库中不含该地址。
+
+## 6. 下一步
+
+M1–M5 已交付并完成真机回归。剩余工作：
+
+1. 生产化收尾：HTTPS + 域名（`internal_ca`）、`COOKIE_SECURE=true`、备份演练；
+2. M6 加固：故障演练（杀 Caddy / worker / MySQL、磁盘写满、单实例 OOM）、压测、inotify 上限；
+3. 二期：GPU、`llm-gateway`（Key 隔离）、多节点/K8s。

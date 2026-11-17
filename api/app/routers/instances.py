@@ -23,6 +23,8 @@ from ..security import new_token
 from ..services import caddy
 from ..services.capacity import probe_capacity
 from ..services.instances import (
+    _try_lock,
+    acquire_lock,
     available_images,
     create_instance,
     default_image,
@@ -136,7 +138,8 @@ def create(
         {"image_id": image.id, "version": image.version},
     )
     db.commit()
-    _schedule(background, provision, instance.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, provision, instance.id, prelocked=True)
     db.refresh(instance)
     return envelope(
         request,
@@ -162,7 +165,8 @@ def start(
         raise ApiError("INSTANCE_STATE_INVALID", "实例正在删除", 409)
     write_audit(db, request, user, "instance.start", "instance", instance.id)
     db.commit()
-    _schedule(background, start_instance, instance.id, user.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, start_instance, instance.id, user.id, prelocked=True)
     return envelope(request, {"status": "starting"})
 
 
@@ -178,7 +182,8 @@ def stop(
         return envelope(request, {"status": instance.status.value})
     write_audit(db, request, user, "instance.stop", "instance", instance.id)
     db.commit()
-    _schedule(background, stop_instance, instance.id, sleep=False, actor_id=user.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, stop_instance, instance.id, sleep=False, actor_id=user.id, prelocked=True)
     return envelope(request, {"status": "stopping"})
 
 
@@ -190,7 +195,8 @@ def sleep(
     db: Session = Depends(get_db),
 ):
     instance = _require_instance(db, user)
-    _schedule(background, stop_instance, instance.id, sleep=True, actor_id=user.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, stop_instance, instance.id, sleep=True, actor_id=user.id, prelocked=True)
     return envelope(request, {"status": "sleeping"})
 
 
@@ -204,7 +210,8 @@ def restart(
     instance = _require_instance(db, user)
     if instance.status == InstanceStatus.deleting:
         raise ApiError("INSTANCE_STATE_INVALID", "实例正在删除", 409)
-    _schedule(background, restart_instance, instance.id, user.id)
+    acquire_lock(instance.id, instance.status.value)
+    _schedule(background, restart_instance, instance.id, user.id, prelocked=True)
     return envelope(request, {"status": "starting"})
 
 
@@ -312,7 +319,10 @@ def launch(
 ):
     instance = _require_instance(db, user)
     if instance.status in {InstanceStatus.stopped, InstanceStatus.sleeping, InstanceStatus.error}:
-        _schedule(background, start_instance, instance.id, user.id)
+        # Launch is a convenience path: if another operation holds the lock the
+        # instance is already coming up, so report progress instead of 409.
+        if _try_lock(instance.id):
+            _schedule(background, start_instance, instance.id, user.id, prelocked=True)
         return envelope(request, {"state": "starting", "retry_after_ms": 1500})
     if instance.status != InstanceStatus.running:
         return envelope(request, {"state": instance.status.value, "retry_after_ms": 1500})
@@ -384,7 +394,8 @@ def wake(wake_key: str, background: BackgroundTasks):
             InstanceStatus.starting,
             InstanceStatus.waking,
         }:
-            _schedule(background, start_instance, instance.id)
+            if _try_lock(instance.id):
+                _schedule(background, start_instance, instance.id, prelocked=True)
         domain = html.escape(str(get_setting(db, "base_domain", settings.base_domain)))
         name = html.escape(instance.subdomain)
         page = """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">

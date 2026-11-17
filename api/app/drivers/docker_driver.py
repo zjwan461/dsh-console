@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from ..config import settings
@@ -29,11 +30,29 @@ class DockerDriver:
                 raise DriverError("docker SDK is not installed") from exc
             try:
                 self._client = docker.DockerClient(
-                    base_url=settings.docker_host, version="auto", timeout=30
+                    base_url=settings.docker_host,
+                    version="auto",
+                    timeout=settings.docker_timeout,
                 )
             except Exception as exc:  # pragma: no cover - depends on the host
                 raise DriverError(f"cannot connect to Docker: {exc}") from exc
         return self._client
+
+    @contextmanager
+    def _long_op(self, seconds: int):
+        """Temporarily raise the HTTP timeout for slow daemon calls.
+
+        Image commit and pull routinely exceed the default request timeout: a
+        28-layer, ~2 GB image took longer than 30s to commit, which surfaced as
+        `ReadTimeout` (and, on retry, as a confusing "content digest not found").
+        """
+        api = self.client.api
+        original = api.timeout
+        api.timeout = seconds
+        try:
+            yield
+        finally:
+            api.timeout = original
 
     def ensure_network(self, name: str) -> None:
         import docker
@@ -205,12 +224,19 @@ class DockerDriver:
         repository, _, tag = image_ref.rpartition(":")
         if not repository:
             repository, tag = image_ref, "latest"
-        container = self.client.containers.get(container_id)
-        image = container.commit(repository=repository, tag=tag, changes=changes)
-        return image.id
+        try:
+            container = self.client.containers.get(container_id)
+            with self._long_op(settings.docker_commit_timeout):
+                image = container.commit(repository=repository, tag=tag, changes=changes)
+            return image.id
+        except DriverError:
+            raise
+        except Exception as exc:
+            raise DriverError(f"docker commit failed: {exc}") from exc
 
     def pull(self, image_ref: str) -> None:
         try:
-            self.client.images.pull(image_ref)
+            with self._long_op(settings.docker_pull_timeout):
+                self.client.images.pull(image_ref)
         except Exception as exc:
             raise DriverError(f"docker pull failed: {exc}") from exc

@@ -88,12 +88,17 @@ def test_instance_lifecycle(client: TestClient):
     assert "/go/" in console_url
 
     ticket_path = console_url.split("/go/", 1)[1]
-    redirect = client.get(f"/api/v1/go/{ticket_path}", follow_redirects=False)
-    assert redirect.status_code == 302
+    # /go is a browser entry point, not part of the versioned API.
+    redirect = client.get(f"/go/{ticket_path}", follow_redirects=False)
+    assert redirect.status_code == 302, redirect.text
     location = redirect.headers["location"]
     assert location.startswith("http://bob.dsh.example.com/?token=")
     assert "token=***" not in location
     assert redirect.headers["cache-control"] == "no-store"
+
+    # The ticket is single-use.
+    replay = client.get(f"/go/{ticket_path}", follow_redirects=False)
+    assert replay.status_code == 410
 
     stopped = client.post("/api/v1/instances/me/stop", headers=_headers(bob_csrf))
     assert stopped.status_code == 202

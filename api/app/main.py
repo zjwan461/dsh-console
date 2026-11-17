@@ -157,7 +157,6 @@ for router in (
     auth.router,
     me.router,
     instances.router,
-    instances.public_router,
     snapshots.router,
     user_images.router,
     files.router,
@@ -176,3 +175,11 @@ for router in (
     system.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
+
+# Browser-facing entry points are NOT part of the versioned API: Caddy rewrites
+# per-user hosts to `/w/{wake_key}`, and the launch URL is `/go/{ticket}`. Mounting
+# them under the API prefix would 404 (or fall through to the SPA and render the
+# login page instead of redirecting).
+app.include_router(instances.public_router)
+# WebSocket routes get their own no-CSRF router (see admin_instances).
+app.include_router(admin_instances.ws_router, prefix=settings.api_prefix)
