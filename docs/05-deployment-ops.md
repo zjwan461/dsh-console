@@ -18,23 +18,27 @@
     └── secrets/master.key
 ```
 
-compose 服务（M1）：
+compose 服务（M2）：
 
 | 服务 | 镜像 | 端口 | 说明 |
 |---|---|---|---|
-| `console-web` | 自建（Caddy + 前端 dist） | `443:443` | 唯一入口；admin API 只在内部网络 |
-| `console-api` | 自建（python） | 内网 8000 | 后续挂 `docker.sock` 与 `DATA_ROOT` |
+| `console-web` | 自建（Caddy + 前端 dist） | `443:443` | 唯一入口；动态路由由 API 生成 |
+| `console-api` | 自建（python） | 内网 8000 | 挂 `docker.sock`、`./data`；创建/启停用户实例 |
 | `mysql` | `mysql:8.4` | 内网 3306 | 数据卷 |
 | `redis` | `redis:7-alpine` | 内网 6379 | AOF everysec |
 
-M2 起加入：`console-worker`（ARQ）、`node-exporter`，以及 `dsh-edge` 网络上的用户实例。
+`console-web` 与用户实例同在 `dsh-edge` 网络；实例不发布端口，只由 Caddy 按子域名反代。
+M3 再加入 `console-worker`（计量/休眠扫描）与 `node-exporter`。
+
+> `console-api` 挂载 `docker.sock` 等于宿主 root 权限。它只能被 Caddy 访问，**不要发布 8000**，也不要给它加额外挂载。
 
 ## 2. 本地开发（无 Docker / MySQL / Redis）
 
 ```bash
 cd api
 python -m pip install -e ".[dev]"
-DATABASE_URL=sqlite:///./dev.db REDIS_FAKE=1 ENV=dev BOOTSTRAP_ADMIN_PASSWORD=admin12345 \
+DATABASE_URL=sqlite:///./dev.db REDIS_FAKE=1 ENV=dev DOCKER_FAKE=1 CADDY_ENABLED=0 JOBS_INLINE=1 \
+  DATA_ROOT=./data BOOTSTRAP_ADMIN_PASSWORD=admin12345 \
   uvicorn app.main:app --reload --port 8000
 
 cd ../web
@@ -43,6 +47,7 @@ npm install && npm run dev      # http://127.0.0.1:5173
 
 - `ENV=dev` 自动建表并注入种子数据（三个套餐 + 默认设置 + 管理员）。
 - `REDIS_FAKE=1` 用 fakeredis 顶替 Redis，登录限流照常工作。
+- `DOCKER_FAKE=1` 用内存驱动模拟容器；`JOBS_INLINE=1` 让创建/启停同步完成，便于本地和测试。
 - 前端 Vite 已把 `/api` 代理到 `127.0.0.1:8000`，无需 CORS。
 - 测试：`cd api && pytest -q`。
 - 生产镜像走 `alembic upgrade head`，不依赖 `create_all`。
@@ -118,25 +123,26 @@ docker compose logs -f console-api     # 等 alembic upgrade head 完成、/read
 
 首次启动自动：
 
-1. 建表（Alembic）；
+1. 建表（Alembic，含 `dsh_images` / `instances` / `instance_events`）；
 2. 种子套餐与默认设置；
 3. 若 `users` 为空，用 `BOOTSTRAP_ADMIN_*` 建管理员；
-4. Caddy 提供 `console.<base_domain>`（M2 起再挂用户实例路由）。
+4. 创建 `dsh-edge` 网络，并向 Caddy 下发全量配置（console + 已有实例路由）。
 
 ## 4. 导入第一个 DSH 版本
 
 ```bash
-# 方式 A：镜像仓库（推荐）
-curl -X POST https://console.dsh.example.com/api/v1/admin/images/import \
+# 1. 先把镜像拉到本机（控制台不负责 pull）
+docker pull ghcr.io/you/dsh:0.2.1-rc.5
+
+# 2. 在控制台「版本」页登记，或调 API（M2 的登记接口）
+curl -X POST https://console.dsh.example.com/api/v1/admin/images \
   -H 'Content-Type: application/json' -b cookie.txt -H "X-CSRF-Token: $CSRF" \
   -d '{"image_ref":"ghcr.io/you/dsh:0.2.1-rc.5","version":"0.2.1-rc.5",
-       "changelog":"首个版本"}'
-
-# 方式 B：离线环境，本机已有镜像 -> 导出 -> 控制台上传
-docker save dsh:0.2.1-rc.5 | zstd > dsh-0.2.1-rc.5.tar.zst
+       "changelog":"首个版本","is_default":true}'
 ```
 
-> 镜像导入接口在 M4 落地；M1 只需要先把镜像 `docker pull` 到本机备用。
+> M2 只做「登记本机已有镜像」；从 Registry 拉取、tar 上传、digest/签名校验在 M4 补齐。
+> 离线环境：`docker load < dsh.tar` 后再登记本地 tag。
 
 **镜像从哪来**：由 `dsh-docker` 的 CI（`build-image.yml`）构建并推 GHCR。控制台**只导入，不构建、不派生、不修改镜像**——包括 `login-gate` 的移除也在 `dsh-docker` 仓库里完成（控制台会把「镜像里还存在 `login-gate`」作为导入时的警告显示出来）。
 
@@ -167,7 +173,7 @@ openssl x509 -in caddy-root.crt -noout -subject -issuer   # 应为 Caddy Local A
 
 ### 5.2 `acme`（公网域名，M2 接入）
 
-> M1 的 `deploy/Caddyfile` 固定使用 `tls internal`；`CONSOLE_TLS_MODE=acme` 的 Caddy 配置生成在 M2 与动态路由一起实现。下面是要点，先记录避免返工。
+> M2 的配置生成同样固定 `internal` issuer；`CONSOLE_TLS_MODE=acme` 在后续版本接入。下面是要点，先记录避免返工。
 
 - `*.{base_domain}` 的 DNS 解析指向本机，且 80/443 可达；
 - 泛域名**必须用 DNS-01**（HTTP-01 不支持通配），需要配 `ACME_DNS_PROVIDER` 与对应凭据（Cloudflare/阿里云等 Caddy 插件）；

@@ -14,6 +14,7 @@ from sqlalchemy import (
     LargeBinary,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -61,6 +62,108 @@ class LedgerReason(enum.StrEnum):
 class CredentialScope(enum.StrEnum):
     platform = "platform"
     user = "user"
+
+
+class ImageStatus(enum.StrEnum):
+    importing = "importing"
+    ready = "ready"
+    disabled = "disabled"
+    failed = "failed"
+
+
+class InstanceStatus(enum.StrEnum):
+    provisioning = "provisioning"
+    starting = "starting"
+    running = "running"
+    sleeping = "sleeping"
+    waking = "waking"
+    stopping = "stopping"
+    stopped = "stopped"
+    error = "error"
+    deleting = "deleting"
+    deleted = "deleted"
+
+
+class DshImage(Base):
+    __tablename__ = "dsh_images"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_ref: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    digest: Mapped[str | None] = mapped_column(String(71), unique=True, nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    arch: Mapped[str] = mapped_column(String(16), nullable=False, default="amd64")
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="pull")
+    status: Mapped[ImageStatus] = mapped_column(
+        enum_col(ImageStatus, "image_status"), nullable=False, default=ImageStatus.importing
+    )
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    changelog: Mapped[str | None] = mapped_column(Text, nullable=True)
+    labels: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Instance(Base):
+    __tablename__ = "instances"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    container_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    container_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("dsh_images.id", ondelete="RESTRICT"), nullable=False
+    )
+    dsh_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[InstanceStatus] = mapped_column(
+        enum_col(InstanceStatus, "instance_status"),
+        nullable=False,
+        default=InstanceStatus.provisioning,
+        index=True,
+    )
+    status_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subdomain: Mapped[str] = mapped_column(String(63), unique=True, nullable=False)
+    cpu_cores: Mapped[float] = mapped_column(Numeric(4, 2), nullable=False)
+    memory_mb: Mapped[int] = mapped_column(Integer, nullable=False)
+    disk_gb: Mapped[int] = mapped_column(Integer, nullable=False)
+    data_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    workspace_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    wake_key: Mapped[str] = mapped_column(String(43), unique=True, nullable=False)
+    idle_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    health: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    image: Mapped[DshImage] = relationship(lazy="joined")
+
+
+class InstanceEvent(Base):
+    __tablename__ = "instance_events"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    instance_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("instances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    type: Mapped[str] = mapped_column(String(48), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    to_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    message: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    actor_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Plan(Base):
@@ -249,6 +352,11 @@ class AuditLog(Base):
 __all__ = [
     "AuditLog",
     "CredentialScope",
+    "DshImage",
+    "ImageStatus",
+    "Instance",
+    "InstanceEvent",
+    "InstanceStatus",
     "Invite",
     "LedgerReason",
     "Plan",

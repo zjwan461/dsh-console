@@ -9,28 +9,37 @@
 
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。
 
-> **当前状态：M1（地基）已可运行。** 已有：登录/邀请注册/会话/CSRF、用户/套餐/配额/邀请管理、审计、系统设置、平台 Key、SQLite + fakeredis 的本地开发模式。实例生命周期从 M2 开始，见 [路线图](docs/06-roadmap.md)。
+> **当前状态：M2（实例生命周期）已落地。** M1 的认证/用户/套餐/配额/审计之外，新增：Docker Driver（含 FakeDriver）、容量探测与准入、实例创建/启停/重启/删除、Caddy 全量路由、token 302 注入、唤醒页、SSE 状态、镜像版本登记、前端实例卡与创建向导。
 
 ## 快速开始（Docker）
 
 ```bash
 cp .env.example .env
 # 必改：SESSION_SECRET / MASTER_KEY / MYSQL_* / BOOTSTRAP_ADMIN_PASSWORD
+# 若项目不在 /srv/dsh-console，把 HOST_DATA_ROOT 改成 "<项目绝对路径>/data"
+mkdir -p data
 docker compose up -d --build
 docker compose logs -f console-api
 ```
 
 打开 `https://console.dsh.example.com`（先把该域名解析到本机；Caddy 用内部 CA，需要信任根证书，见 [05 文档](docs/05-deployment-ops.md)）。
 
+先以管理员登录 → **版本** → 登记一个已经 `docker pull` 到本机的镜像（例如 `ghcr.io/you/dsh:0.2.1-rc.5`），再让用户创建实例。
+
+> M2 起 `console-api` 挂载 `/var/run/docker.sock` 与 `./data`，并加入 `dsh-edge` 网络。这是 root 等价权限，务必只让 Caddy 访问 API，不要把 8000 端口发布出去。
+
 ## 本地开发（不需要 Docker / MySQL / Redis）
 
 ```bash
 cd api
 python -m pip install -e ".[dev]"
-DATABASE_URL=sqlite:///./dev.db REDIS_FAKE=1 ENV=dev \
+DATABASE_URL=sqlite:///./dev.db REDIS_FAKE=1 ENV=dev DOCKER_FAKE=1 CADDY_ENABLED=0 JOBS_INLINE=1 \
+  DATA_ROOT=./data \
   uvicorn app.main:app --reload --port 8000
 # 首次启动会用 BOOTSTRAP_ADMIN_PASSWORD 建管理员；未设置时随机生成并打印在日志里
 ```
+
+> `DOCKER_FAKE=1` 用内存驱动模拟容器（创建/启停/日志 token 都可用），因此**不装 Docker 也能走通创建实例 → 打开 → 停止的完整链路**。
 
 ```bash
 cd web

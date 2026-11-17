@@ -126,6 +126,28 @@ class GrantIn(BaseModel):
     reason: str = Field(min_length=1, max_length=255)
 
 
+class InstanceCreateIn(BaseModel):
+    image_id: int | None = None
+    idle_timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+
+class InstancePatchIn(BaseModel):
+    idle_timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
+
+
+class ImageRegisterIn(BaseModel):
+    image_ref: str = Field(min_length=3, max_length=255)
+    version: str = Field(min_length=1, max_length=64)
+    changelog: str = Field(default="", max_length=2000)
+    is_default: bool = False
+
+
+class ImagePatchIn(BaseModel):
+    status: Literal["ready", "disabled"] | None = None
+    is_default: bool | None = None
+    changelog: str | None = Field(default=None, max_length=2000)
+
+
 class SettingsIn(BaseModel):
     base_domain: str | None = Field(default=None, max_length=190)
     console_name: str | None = Field(default=None, max_length=64)

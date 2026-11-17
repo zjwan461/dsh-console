@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  Box,
   DataAnalysis,
   Document,
   HomeFilled,
@@ -24,6 +25,7 @@ const activeMenu = computed(() => route.path)
 const adminMenus = [
   { path: '/admin/users', label: '用户', icon: UserFilled },
   { path: '/admin/plans', label: '套餐', icon: Tickets },
+  { path: '/admin/images', label: '版本', icon: Box },
   { path: '/admin/invites', label: '邀请码', icon: Document },
   { path: '/admin/audit', label: '审计', icon: DataAnalysis },
   { path: '/admin/settings', label: '系统设置', icon: Setting },

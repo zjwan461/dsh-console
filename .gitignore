@@ -17,6 +17,7 @@ api/.venv/
 .env
 .env.local
 data/
+test_data/
 snapshots/
 backups/
 

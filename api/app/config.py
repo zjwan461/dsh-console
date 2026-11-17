@@ -41,6 +41,24 @@ class Settings(BaseSettings):
     upload_max_mb: int = 1024
     default_idle_minutes: int = 30
 
+    # ── container runtime (M2) ───────────────────────────────────────────
+    data_root: str = "/srv/dsh-console/data"
+    # Absolute path of DATA_ROOT on the Docker HOST. Bind sources are resolved by
+    # the daemon, not by this container, so they must use the host path. Equal to
+    # data_root when the project really lives at /srv/dsh-console.
+    host_data_root: str = "/srv/dsh-console/data"
+    docker_host: str = "unix:///var/run/docker.sock"
+    docker_fake: bool = False
+    instance_network: str = "dsh-edge"
+    instance_uid: int = 1000
+    instance_gid: int = 1000
+    instance_shm_mb: int = 512
+    instance_pids_limit: int = 4096
+    public_scheme: str = "https"
+    caddy_admin_url: str = "http://console-web:2019"
+    caddy_enabled: bool = True
+    jobs_inline: bool = False
+
     # capacity admission (see docs/02 §10)
     memory_reserve_mb: int = 4096
     memory_reserve_percent: int = 10

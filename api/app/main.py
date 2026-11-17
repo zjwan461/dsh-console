@@ -17,12 +17,16 @@ from .models import User  # noqa: F401  (registers metadata)
 from .redis import redis_ok
 from .routers import (
     admin_audit,
+    admin_images,
+    admin_instances,
     admin_invites,
     admin_plans,
     admin_quotas,
     admin_settings,
     admin_users,
     auth,
+    events,
+    instances,
     me,
     system,
 )
@@ -38,6 +42,9 @@ log = logging.getLogger("dsh.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import os
+
+    os.makedirs(settings.data_root, exist_ok=True)
     if settings.is_dev or settings.env == "sqlite":
         Base.metadata.create_all(engine)
     with SessionLocal() as db:
@@ -46,6 +53,28 @@ async def lifespan(app: FastAPI):
         except SQLAlchemyError:
             log.exception("seed failed (database not ready?)")
             raise
+    try:
+        from .drivers import get_driver
+
+        get_driver().ensure_network(settings.instance_network)
+    except Exception:
+        log.warning("container runtime is not reachable at startup", exc_info=True)
+    try:
+        from .services import caddy
+
+        with SessionLocal() as db:
+            for attempt in range(10):
+                try:
+                    caddy.apply(db)
+                    break
+                except Exception:
+                    if attempt == 9:
+                        raise
+                    import time
+
+                    time.sleep(1)
+    except Exception:
+        log.warning("could not publish Caddy config at startup", exc_info=True)
     log.info("api ready env=%s prefix=%s", settings.env, settings.api_prefix)
     yield
 
@@ -121,10 +150,15 @@ def readyz():
 for router in (
     auth.router,
     me.router,
+    instances.router,
+    instances.public_router,
+    events.router,
     admin_users.router,
     admin_plans.router,
     admin_invites.router,
     admin_quotas.router,
+    admin_images.router,
+    admin_instances.router,
     admin_settings.router,
     admin_audit.router,
     system.router,

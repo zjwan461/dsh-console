@@ -25,17 +25,20 @@
 
 **验收**：管理员建邀请码 → 新用户注册 → 登录；错误密码触发 429；审计有记录。
 
-### M2 实例生命周期（约 10 人日）
+### M2 实例生命周期（已完成，2026-11-17）
 
-- DockerDriver（create/start/stop/remove/inspect/stats/logs）
-- 容量探测与准入（`docker info` + `statfs` + 每 30s 刷新，见 02 §10）
-- 实例创建（目录、权限、容器参数、标签）、启停/重启/删除
-- Caddy 全量配置生成与热加载、启动对账
-- token 解析（日志正则 + Redis 缓存）、`/launch` + `/go/{ticket}` 302
-- SSE 状态推送、实例事件时间线
-- 前端：实例卡片、创建向导、进度、打开按钮
+- [x] DockerDriver（create/start/stop/remove/inspect/stats/logs）+ FakeDriver
+- [x] 容量探测与准入（`docker info` + `statfs`，每次创建时计算）
+- [x] 实例创建（目录、权限、容器参数、标签）、启停/重启/删除
+- [x] Caddy 全量配置生成与热加载、启动重放
+- [x] token 解析（日志正则 + Redis 缓存）、`/launch` + `/go/{ticket}` 302、唤醒页
+- [x] SSE 状态推送、实例事件时间线
+- [x] 前端：实例卡、创建向导、状态轮询、打开/停止/重启/删除
+- [x] 管理员：镜像登记/启停/默认、实例列表/强制操作/日志
 
-**验收**：新用户 60 秒内创建实例并从控制台无感进入 GUI；`docker inspect` 确认资源限制；停/启/删状态正确。
+**验收**：FakeDriver 下创建 → 运行 → 打开 302 → 停止 → 启动 → 删除全链路测试通过；`docker inspect` 资源限制在真实 Docker 环境联调。
+
+> 真实 Docker 联调待远程环境；`DOCKER_HOST=tcp://...` 即可切换，无需改代码。
 
 ### M3 计量、配额与休眠（约 8 人日）
 

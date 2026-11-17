@@ -17,6 +17,21 @@ x-api-env: &api-env
   MEMORY_RESERVE_PERCENT: ${MEMORY_RESERVE_PERCENT:-10}
   CPU_OVERCOMMIT: ${CPU_OVERCOMMIT:-4.0}
   DISK_USE_RATIO: ${DISK_USE_RATIO:-0.90}
+  # container runtime (M2)
+  DATA_ROOT: /srv/dsh-console/data
+  # Host-side absolute path of the ./data mount. Must be set when the project is
+  # not deployed at /srv/dsh-console, because Docker resolves bind sources on the
+  # host, not inside this container.
+  HOST_DATA_ROOT: ${HOST_DATA_ROOT:-/srv/dsh-console/data}
+  DOCKER_HOST: unix:///var/run/docker.sock
+  DOCKER_FAKE: "0"
+  INSTANCE_NETWORK: ${INSTANCE_NETWORK:-dsh-edge}
+  INSTANCE_UID: ${INSTANCE_UID:-1000}
+  INSTANCE_GID: ${INSTANCE_GID:-1000}
+  CADDY_ENABLED: "1"
+  CADDY_ADMIN_URL: http://console-web:2019
+  PUBLIC_SCHEME: https
+  JOBS_INLINE: "0"
 
 services:
   mysql:
@@ -70,6 +85,11 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    volumes:
+      # Root-equivalent: the API creates/starts/stops the per-user containers.
+      # Never expose this service publicly; only Caddy reaches :8000.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/srv/dsh-console/data
     networks: [console]
 
   console-web:
@@ -81,15 +101,21 @@ services:
       CONSOLE_DOMAIN: ${CONSOLE_DOMAIN:-console.dsh.example.com}
     depends_on:
       console-api:
-        condition: service_healthy
+        # service_started, not service_healthy: Caddy must be up BEFORE the API
+        # publishes its generated config, otherwise the API would wait for a
+        # proxy that is waiting for the API's healthcheck.
+        condition: service_started
     ports:
       - "${CONSOLE_HTTPS_PORT:-443}:443"
     volumes:
       - caddy-data:/data
-    networks: [console]
+    networks: [console, edge]
 
 networks:
   console:
+    driver: bridge
+  edge:
+    name: ${INSTANCE_NETWORK:-dsh-edge}
     driver: bridge
 
 volumes:

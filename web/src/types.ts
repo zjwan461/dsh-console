@@ -96,6 +96,80 @@ export interface AdminUser {
   disabled_reason: string | null
 }
 
+export type InstanceStatus =
+  | 'provisioning'
+  | 'starting'
+  | 'running'
+  | 'sleeping'
+  | 'waking'
+  | 'stopping'
+  | 'stopped'
+  | 'error'
+  | 'deleting'
+
+export interface Instance {
+  id: number
+  status: InstanceStatus
+  status_reason: string | null
+  error: string | null
+  health: string
+  dsh_version: string
+  image_id: number
+  subdomain: string
+  url: string
+  spec: { cpu_cores: number; memory_mb: number; disk_gb: number }
+  idle_timeout_seconds: number
+  last_active_at: string | null
+  last_started_at: string | null
+  last_stopped_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface InstanceOptions {
+  plans: Array<{
+    id: number
+    code: string
+    name: string
+    cpu_cores: number
+    memory_mb: number
+    disk_gb: number
+    monthly_minutes: number
+    is_default: boolean
+  }>
+  images: Array<{
+    id: number
+    version: string
+    size_bytes: number
+    is_default: boolean
+    changelog: string | null
+  }>
+  default_image_id: number | null
+  quota: Quota
+  capacity: {
+    cpu_cores: number
+    cpu_committed: number
+    cpu_limit: number
+    mem_total_mb: number
+    mem_committed_mb: number
+    mem_limit_mb: number
+    disk_total_gb: number
+    disk_committed_gb: number
+    disk_limit_gb: number
+    can_admit: { cpu: boolean; memory: boolean; disk: boolean }
+  }
+  can_create: boolean
+}
+
+export interface InstanceEventItem {
+  id: number
+  type: string
+  from: string | null
+  to: string | null
+  message: string
+  created_at: string
+}
+
 export interface AdminQuota {
   user_id: number
   username: string
