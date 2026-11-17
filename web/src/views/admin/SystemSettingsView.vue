@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 import type { Settings } from '@/types'
 
@@ -10,6 +10,8 @@ const keySaving = ref(false)
 const platformConfigured = ref(false)
 const platformHint = ref('')
 const platformKey = ref('')
+const platformBaseUrl = ref<string | null>(null)
+const platformBaseUrlInput = ref('')
 const form = reactive<Settings>({
   base_domain: 'dsh.example.com',
   console_name: '优墨云舱',
@@ -30,11 +32,15 @@ async function load() {
   try {
     const data = await api.get<Settings>('/admin/settings')
     Object.assign(form, data)
-    const cred = await api.get<{ configured: boolean; hint: string }>(
-      '/admin/credentials/platform',
-    )
+    const cred = await api.get<{
+      configured: boolean
+      hint: string
+      base_url: string | null
+    }>('/admin/credentials/platform')
     platformConfigured.value = cred.configured
     platformHint.value = cred.hint
+    platformBaseUrl.value = cred.base_url
+    platformBaseUrlInput.value = cred.base_url ?? ''
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -73,14 +79,46 @@ async function save() {
 async function savePlatformKey() {
   keySaving.value = true
   try {
-    const result = await api.put<{ configured: boolean; hint: string }>(
-      '/admin/credentials/platform',
-      { api_key: platformKey.value },
-    )
+    const result = await api.put<{
+      configured: boolean
+      hint: string
+      base_url: string | null
+    }>('/admin/credentials/platform', {
+      api_key: platformKey.value,
+      base_url: platformBaseUrlInput.value,
+    })
     platformConfigured.value = result.configured
     platformHint.value = result.hint
+    platformBaseUrl.value = result.base_url
+    platformBaseUrlInput.value = result.base_url ?? ''
     platformKey.value = ''
     ElMessage.success(result.configured ? '平台 Key 已保存' : '平台 Key 已清除')
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
+  } finally {
+    keySaving.value = false
+  }
+}
+
+async function clearPlatformKey() {
+  try {
+    await ElMessageBox.confirm(
+      '清除后，未自带 Key 的用户将无法调用模型，直到重新配置。',
+      '清除平台 Key',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  keySaving.value = true
+  try {
+    await api.put('/admin/credentials/platform', { clear_key: true })
+    platformConfigured.value = false
+    platformHint.value = ''
+    platformBaseUrl.value = null
+    platformBaseUrlInput.value = ''
+    platformKey.value = ''
+    ElMessage.success('平台 Key 已清除')
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -105,7 +143,9 @@ onMounted(load)
       <el-form label-width="170px" style="max-width: 720px">
         <el-form-item label="基础域名">
           <el-input v-model="form.base_domain" placeholder="dsh.example.com" />
-          <div class="hint">控制台为 console.&lt;域名&gt;，用户实例为 &lt;用户名&gt;.&lt;域名&gt;</div>
+          <div class="hint">
+            控制台为 console.&lt;域名&gt;，用户实例为 &lt;用户名&gt;.&lt;域名&gt;
+          </div>
         </el-form-item>
         <el-form-item label="控制台名称">
           <el-input v-model="form.console_name" />
@@ -150,23 +190,43 @@ onMounted(load)
         用于未自带 Key 的实例。风险提示：Key 会以环境变量注入容器，实例内可被读取；
         生产环境建议只对可信用户开放，并尽快启用 1.5 期的 Key 网关。
       </p>
-      <el-form label-width="170px" style="max-width: 720px">
+      <el-form label-width="170px" style="max-width: 760px">
         <el-form-item label="当前状态">
           <el-tag :type="platformConfigured ? 'success' : 'info'">
             {{ platformConfigured ? `已配置 ${platformHint}` : '未配置' }}
           </el-tag>
+          <span class="muted" style="margin-left: 10px; font-size: 12px">
+            {{ platformBaseUrl || '官方地址' }}
+          </span>
         </el-form-item>
         <el-form-item label="设置 Key">
           <el-input
             v-model="platformKey"
             type="password"
             show-password
-            placeholder="sk-...（留空表示清除）"
+            placeholder="sk-...（留空则沿用已保存的 Key）"
           />
         </el-form-item>
+        <el-form-item label="Base URL">
+          <el-input
+            v-model="platformBaseUrlInput"
+            placeholder="https://api.deepseek.com/v1（留空 = 官方地址）"
+          />
+          <div class="muted" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
+            用户没有自填地址时使用这个端点。兼容 OpenAI 协议的网关（LiteLLM / vLLM / 中转）填到
+            <span class="mono">/v1</span>；会写入各实例的 <span class="mono">settings.yaml</span>。
+          </div>
+        </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="keySaving" @click="savePlatformKey">
-            保存 Key
+          <el-button type="primary" :loading="keySaving" @click="savePlatformKey"> 保存 </el-button>
+          <el-button
+            v-if="platformConfigured"
+            type="danger"
+            plain
+            :disabled="keySaving"
+            @click="clearPlatformKey"
+          >
+            清除平台 Key
           </el-button>
         </el-form-item>
       </el-form>

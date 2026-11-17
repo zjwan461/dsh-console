@@ -174,6 +174,7 @@ class DockerDriver:
             health=health,
             started_at=started_at,
             exit_code=state.get("ExitCode"),
+            labels=dict((attrs.get("Config") or {}).get("Labels") or {}),
         )
 
     def wait_healthy(self, container_id: str, timeout: int = 90) -> ContainerInfo:

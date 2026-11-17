@@ -29,6 +29,7 @@ class ContainerInfo:
     health: str | None = None
     started_at: datetime | None = None
     exit_code: int | None = None
+    labels: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

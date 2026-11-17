@@ -105,6 +105,7 @@ class FakeDriver:
             status=item["status"],
             health=item["health"],
             started_at=item["started_at"],
+            labels=dict(item["spec"].labels),
         )
 
     def wait_healthy(self, container_id: str, timeout: int = 90) -> ContainerInfo:

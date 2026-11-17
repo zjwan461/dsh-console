@@ -12,7 +12,7 @@ from ..deps import csrf_guard, require_admin
 from ..errors import ApiError, envelope
 from ..models import CredentialScope, ProviderCredential, User
 from ..schemas import CredentialIn, SettingsIn
-from ..security import encrypt_secret, mask_key, utcnow
+from ..services import provider
 from ..services.settings import all_settings, put_setting
 
 router = APIRouter(prefix="/admin", tags=["admin:settings"], dependencies=[Depends(csrf_guard)])
@@ -53,15 +53,7 @@ def update_settings(
 
 
 def _platform_credential(db: Session) -> ProviderCredential | None:
-    return (
-        db.query(ProviderCredential)
-        .filter(
-            ProviderCredential.scope == CredentialScope.platform,
-            ProviderCredential.user_id == 0,
-            ProviderCredential.provider == "deepseek",
-        )
-        .first()
-    )
+    return provider.find(db, CredentialScope.platform, 0)
 
 
 @router.get("/credentials/platform")
@@ -70,15 +62,7 @@ def get_platform_credential(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    cred = _platform_credential(db)
-    return envelope(
-        request,
-        {
-            "configured": cred is not None,
-            "hint": cred.key_hint if cred else "",
-            "updated_at": cred.updated_at.isoformat() + "Z" if cred else None,
-        },
-    )
+    return envelope(request, provider.view(_platform_credential(db)))
 
 
 @router.put("/credentials/platform")
@@ -88,28 +72,15 @@ def put_platform_credential(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    cred = _platform_credential(db)
-    key = payload.api_key.strip()
-    if not key:
-        if cred is not None:
-            db.delete(cred)
-    else:
-        if len(key) < 8:
-            raise ApiError("VALIDATION_ERROR", "API Key 格式不正确", 422)
-        if cred is None:
-            cred = ProviderCredential(
-                scope=CredentialScope.platform,
-                user_id=0,
-                provider="deepseek",
-                ciphertext=encrypt_secret(key),
-                key_hint=mask_key(key),
-                created_by=admin.id,
-            )
-            db.add(cred)
-        else:
-            cred.ciphertext = encrypt_secret(key)
-            cred.key_hint = mask_key(key)
-            cred.updated_at = utcnow()
+    cred, cleared = provider.save(
+        db,
+        scope=CredentialScope.platform,
+        user_id=0,
+        api_key=payload.api_key,
+        base_url=payload.base_url,
+        actor_id=admin.id,
+        clear_key=payload.clear_key,
+    )
     write_audit(
         db,
         request,
@@ -117,7 +88,11 @@ def put_platform_credential(
         "admin.platform_key_update",
         "provider_credential",
         "deepseek",
-        {"cleared": not key},
+        {
+            "cleared": cleared,
+            "key_changed": bool((payload.api_key or "").strip()),
+            "base_url": cred.base_url if cred else None,
+        },
     )
     db.commit()
-    return envelope(request, {"configured": bool(key), "hint": mask_key(key) if key else ""})
+    return envelope(request, provider.view(cred))

@@ -160,18 +160,38 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 ```json
 { "data": {
   "platform_key_configured": true,
-  "user_key": { "configured": true, "hint": "…abcd", "updated_at": "..." }
+  "platform_base_url": "https://gateway.example.com/v1",
+  "user_key": { "configured": true, "hint": "…abcd",
+                "base_url": "https://api.deepseek.com/v1", "updated_at": "..." },
+  "effective": "user",
+  "effective_base_url": "https://api.deepseek.com/v1"
 }}
 ```
+
+`base_url` 为 `null` 表示官方默认地址。`effective*` 是「用户自身优先、否则平台」的结果。
 
 ### PUT `/me/credentials`
 
 ```json
-{ "api_key": "sk-..." }
+{ "api_key": "sk-...", "base_url": "https://gateway.example.com/v1" }
 ```
 
-`204`。传空字符串表示清除、回退平台 Key。**响应不回显明文**。
-重启实例后生效（响应头 `X-Needs-Restart: true`）。
+语义（`api_key` / `base_url` 均可省略）：
+
+| 请求 | 行为 |
+|---|---|
+| `api_key` 非空 | 保存/替换 Key，并按需写入 `base_url` |
+| `api_key` 空、`base_url` 非空 | 只改地址，保留已有 Key |
+| `base_url` 为 `""` | 地址恢复官方默认，Key 不变 |
+| `clear_key: true` | 删除整条凭据，回退平台 Key |
+| `api_key: ""` 且未传 `base_url` | 兼容旧客户端的「清除」语义 |
+
+`base_url` 必须是 `http(s)://` 完整地址，不能带查询参数；末尾 `/` 会被去掉。
+`200` 返回与 GET 相同的 `user_key` 结构，**不回显明文**；响应头 `X-Needs-Restart: true`。
+
+生效方式：Key 注入容器环境变量（创建时固定），地址写入实例的
+`DATA_ROOT/instances/<uid>/data/settings.yaml` 的 `llm-deepseek.baseURL`。
+重启实例时若配置哈希变化，控制台会**重建容器**（而不是复用旧环境）。
 
 ## 4. 实例（每人一个）
 
@@ -649,6 +669,18 @@ M5 实现：管理员 cookie 鉴权后直接升级 WebSocket，转发一个真�
 ```
 
 `PUT` 支持部分字段；`base_domain` 变更需重启 Caddy 并重新签发证书（返回 `X-Needs-Caddy-Reload: true`）。
+
+### GET/PUT `/admin/credentials/platform`
+
+平台默认 Key 与端点，未自带凭据的用户使用它。
+
+```json
+{ "data": { "configured": true, "hint": "…abcd",
+            "base_url": "https://gateway.example.com/v1", "updated_at": "..." } }
+```
+
+`PUT` 与 `/me/credentials` 同构：`{ "api_key"?, "base_url"?, "clear_key"? }`。
+`base_url` 为空字符串表示恢复官方地址，`clear_key: true` 删除整条凭据。响应同样不回显明文。
 
 ### GET `/admin/system/health`
 

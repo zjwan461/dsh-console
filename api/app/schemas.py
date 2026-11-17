@@ -42,7 +42,10 @@ class ProfileIn(BaseModel):
 
 
 class CredentialIn(BaseModel):
-    api_key: str = Field(default="", max_length=512)
+    api_key: str | None = Field(default=None, max_length=512)
+    # Optional OpenAI-compatible endpoint; `""` resets to the provider default.
+    base_url: str | None = Field(default=None, max_length=500)
+    clear_key: bool = False
 
 
 class UserCreateIn(BaseModel):

@@ -14,13 +14,12 @@ from ..errors import ApiError, envelope
 from ..models import (
     Announcement,
     CredentialScope,
-    ProviderCredential,
     Ticket,
     User,
 )
 from ..redis import get_redis
 from ..schemas import CredentialIn, ProfileIn
-from ..security import encrypt_secret, mask_key, utcnow
+from ..services import provider
 from ..services.instances import get_instance, instance_view
 from ..services.quota import quota_view
 from ..services.settings import get_setting
@@ -53,15 +52,7 @@ def _range(start: str | None, end: str | None) -> tuple[datetime, datetime]:
 
 
 def _credential(db: Session, scope: CredentialScope, user_id: int):
-    return (
-        db.query(ProviderCredential)
-        .filter(
-            ProviderCredential.scope == scope,
-            ProviderCredential.user_id == user_id,
-            ProviderCredential.provider == "deepseek",
-        )
-        .first()
-    )
+    return provider.find(db, scope, user_id)
 
 
 @router.get("/overview")
@@ -174,18 +165,16 @@ def update_profile(
 def get_credentials(
     request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)
 ):
-    platform = _credential(db, CredentialScope.platform, 0)
-    own = _credential(db, CredentialScope.user, user.id)
+    platform = provider.find(db, CredentialScope.platform, 0)
+    own = provider.find(db, CredentialScope.user, user.id)
     return envelope(
         request,
         {
             "platform_key_configured": platform is not None,
-            "user_key": {
-                "configured": own is not None,
-                "hint": own.key_hint if own else "",
-                "updated_at": own.updated_at.isoformat() + "Z" if own else None,
-            },
+            "platform_base_url": platform.base_url if platform else None,
+            "user_key": provider.view(own),
             "effective": "user" if own else ("platform" if platform else "none"),
+            "effective_base_url": (own or platform).base_url if (own or platform) else None,
         },
     )
 
@@ -198,28 +187,15 @@ def put_credentials(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    own = _credential(db, CredentialScope.user, user.id)
-    key = payload.api_key.strip()
-    if not key:
-        if own is not None:
-            db.delete(own)
-    else:
-        if len(key) < 8:
-            raise ApiError("VALIDATION_ERROR", "API Key 格式不正确", 422)
-        if own is None:
-            own = ProviderCredential(
-                scope=CredentialScope.user,
-                user_id=user.id,
-                provider="deepseek",
-                ciphertext=encrypt_secret(key),
-                key_hint=mask_key(key),
-                created_by=user.id,
-            )
-            db.add(own)
-        else:
-            own.ciphertext = encrypt_secret(key)
-            own.key_hint = mask_key(key)
-            own.updated_at = utcnow()
+    record, cleared = provider.save(
+        db,
+        scope=CredentialScope.user,
+        user_id=user.id,
+        api_key=payload.api_key,
+        base_url=payload.base_url,
+        actor_id=user.id,
+        clear_key=payload.clear_key,
+    )
     write_audit(
         db,
         request,
@@ -227,11 +203,17 @@ def put_credentials(
         "me.credentials_update",
         "user",
         user.id,
-        {"cleared": not key},
+        {
+            "cleared": cleared,
+            "key_changed": bool((payload.api_key or "").strip()),
+            "base_url": record.base_url if record else None,
+        },
     )
     db.commit()
+    # Env and settings.yaml are baked into the container, so a restart is needed;
+    # the instance service recreates the container when the config hash changes.
     response.headers["X-Needs-Restart"] = "true"
-    return envelope(request, {"configured": bool(key), "hint": mask_key(key) if key else ""})
+    return envelope(request, provider.view(record))
 
 
 @router.get("/announcements")

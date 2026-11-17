@@ -12,18 +12,16 @@ from ..config import settings
 from ..drivers import ContainerSpec, DriverError, get_driver
 from ..errors import ApiError
 from ..models import (
-    CredentialScope,
     DshImage,
     ImageStatus,
     Instance,
     InstanceEvent,
     InstanceStatus,
     Plan,
-    ProviderCredential,
     User,
 )
 from ..redis import get_redis
-from ..security import decrypt_secret, new_token, utcnow
+from ..security import new_token, utcnow
 from . import caddy
 from .capacity import admit, probe_capacity
 from .quota import effective, ensure_quota
@@ -86,33 +84,10 @@ def _ensure_dirs(instance: Instance) -> None:
                 pass
 
 
-def _effective_key(db: Session, user_id: int) -> str | None:
-    own = (
-        db.query(ProviderCredential)
-        .filter(
-            ProviderCredential.scope == CredentialScope.user,
-            ProviderCredential.user_id == user_id,
-            ProviderCredential.provider == "deepseek",
-        )
-        .first()
-    )
-    platform = (
-        db.query(ProviderCredential)
-        .filter(
-            ProviderCredential.scope == CredentialScope.platform,
-            ProviderCredential.user_id == 0,
-            ProviderCredential.provider == "deepseek",
-        )
-        .first()
-    )
-    credential = own or platform
-    if credential is None:
-        return None
-    try:
-        return decrypt_secret(credential.ciphertext)
-    except Exception:
-        log.exception("cannot decrypt provider credential for user %s", user_id)
-        return None
+def _effective_credential(db: Session, user_id: int) -> tuple[str | None, str | None]:
+    from . import provider
+
+    return provider.effective(db, user_id)
 
 
 def _env(instance: Instance, db: Session) -> dict[str, str]:
@@ -129,10 +104,102 @@ def _env(instance: Instance, db: Session) -> dict[str, str]:
         "NO_PROXY": "127.0.0.1,localhost,172.16.0.0/12",
         "no_proxy": "127.0.0.1,localhost,172.16.0.0/12",
     }
-    key = _effective_key(db, instance.user_id)
+    key, _ = _effective_credential(db, instance.user_id)
     if key:
         env["DEEPSEEK_API_KEY"] = key
     return env
+
+
+def _write_model_settings(instance: Instance, db: Session) -> None:
+    """Point the instance's `llm-deepseek` adapter at the user's endpoint.
+
+    DSH reads `$DSH_HOME/settings.yaml`; the endpoint lives there as
+    `llm-deepseek.baseURL` (the key itself stays in the environment). The file is
+    merged, never replaced: users may have configured other providers from the DSH
+    web UI, and an unparseable file is left untouched rather than clobbered.
+    """
+    import tempfile
+
+    import yaml
+
+    _, base_url = _effective_credential(db, instance.user_id)
+    path = os.path.join(instance.data_path, "settings.yaml")
+    exists = os.path.exists(path)
+    if not base_url and not exists:
+        return
+
+    data: dict = {}
+    if exists:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                loaded = yaml.safe_load(fh)
+            data = loaded if isinstance(loaded, dict) else {}
+        except (OSError, yaml.YAMLError) as exc:
+            log.warning("cannot read %s, leaving it untouched: %s", path, exc)
+            return
+
+    section = data.get("llm-deepseek")
+    if not isinstance(section, dict):
+        section = {}
+    if base_url:
+        section["baseURL"] = base_url
+    else:
+        section.pop("baseURL", None)
+    if section:
+        data["llm-deepseek"] = section
+    else:
+        data.pop("llm-deepseek", None)
+    if not data and not base_url:
+        return
+
+    os.makedirs(instance.data_path, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=instance.data_path, prefix=".settings-", suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(data, fh, allow_unicode=True, sort_keys=False)
+        if hasattr(os, "chown"):
+            try:
+                os.chown(tmp, settings.instance_uid, settings.instance_gid)
+            except PermissionError:
+                pass
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _config_hash(spec: ContainerSpec, base_url: str | None = None) -> str:
+    """Identity of everything that requires re-creating (not just restarting) a container."""
+    import hashlib
+    import json
+
+    payload = {
+        "image": spec.image,
+        "env": dict(sorted(spec.env.items())),
+        "mounts": spec.mounts,
+        "cpu": spec.cpu_cores,
+        "mem": spec.memory_mb,
+        "shm": spec.shm_mb,
+        "pids": spec.pids_limit,
+        "user": spec.user,
+        # The endpoint lives in settings.yaml rather than the env. It is hashed so
+        # one restart applies both a key and an endpoint change consistently,
+        # instead of depending on whether DSH happened to hot-reload the file.
+        "base_url": base_url or "",
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _needs_recreate(instance: Instance, spec: ContainerSpec, driver) -> bool:
+    """True when the running container predates a config change (key, image...)."""
+    if not instance.container_id:
+        return True
+    try:
+        info = driver.inspect(instance.container_id)
+    except DriverError:
+        return True
+    expected = spec.labels.get("dsh.console.config_hash")
+    return info.labels.get("dsh.console.config_hash") != expected
 
 
 def host_path(path: str) -> str:
@@ -154,7 +221,7 @@ def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
         user_image = db.get(UserImage, instance.user_image_id)
         if user_image is not None and user_image.status.value == "ready":
             image_ref = user_image.image_ref
-    return ContainerSpec(
+    spec = ContainerSpec(
         name=instance.container_name,
         image=image_ref,
         env=_env(instance, db),
@@ -175,6 +242,11 @@ def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
         pids_limit=settings.instance_pids_limit,
         user=f"{settings.instance_uid}:{settings.instance_gid}",
     )
+    # Lets a later start/restart detect that the *effective* config changed (key,
+    # base URL, image...) and re-create the container instead of reusing stale env.
+    _, base_url = _effective_credential(db, instance.user_id)
+    spec.labels["dsh.console.config_hash"] = _config_hash(spec, base_url)
+    return spec
 
 
 def resolve_token(instance: Instance, force: bool = False) -> str | None:
@@ -307,8 +379,16 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
         if image is None:
             raise RuntimeError("image record disappeared")
         _ensure_dirs(instance)
-        if not instance.container_id:
-            instance.container_id = driver.create(_spec(instance, image, db))
+        _write_model_settings(instance, db)
+        spec = _spec(instance, image, db)
+        if _needs_recreate(instance, spec, driver):
+            if instance.container_id:
+                try:
+                    driver.remove(instance.container_id, force=True)
+                except DriverError:
+                    log.warning("could not remove stale container %s", instance.container_id)
+                instance.container_id = None
+            instance.container_id = driver.create(spec)
             db.commit()
         driver.start(instance.container_id)
         info = driver.wait_healthy(instance.container_id, timeout=90)
@@ -363,17 +443,21 @@ def start_instance(
 
         driver = get_driver()
         driver.ensure_network(settings.instance_network)
-        if instance.container_id:
-            try:
-                driver.inspect(instance.container_id)
-            except DriverError:
+        image = db.get(DshImage, instance.image_id)
+        if image is None:
+            raise RuntimeError("image record disappeared")
+        _ensure_dirs(instance)
+        _write_model_settings(instance, db)
+        spec = _spec(instance, image, db)
+        if _needs_recreate(instance, spec, driver):
+            if instance.container_id:
+                try:
+                    driver.remove(instance.container_id, force=True)
+                except DriverError:
+                    log.warning("could not remove stale container %s", instance.container_id)
                 instance.container_id = None
                 db.commit()
-        if not instance.container_id:
-            image = db.get(DshImage, instance.image_id)
-            if image is None:
-                raise RuntimeError("image record disappeared")
-            instance.container_id = driver.create(_spec(instance, image, db))
+            instance.container_id = driver.create(spec)
             db.commit()
         driver.start(instance.container_id)
         info = driver.wait_healthy(instance.container_id)
@@ -484,15 +568,29 @@ def restart_instance(
         log_event(db, instance, "restart", previous, InstanceStatus.starting, actor_id=actor_id)
         db.commit()
         driver = get_driver()
-        if instance.container_id:
-            driver.stop(instance.container_id)
+        image = db.get(DshImage, instance.image_id)
+        if image is None:
+            raise RuntimeError("image record disappeared")
+        _ensure_dirs(instance)
+        # settings.yaml (endpoint) and the env (key) are read at container start;
+        # a changed config means the old container can no longer be reused.
+        _write_model_settings(instance, db)
+        spec = _spec(instance, image, db)
+        if _needs_recreate(instance, spec, driver):
+            if instance.container_id:
+                try:
+                    driver.stop(instance.container_id)
+                except DriverError:
+                    pass
+                try:
+                    driver.remove(instance.container_id, force=True)
+                except DriverError:
+                    log.warning("could not remove stale container %s", instance.container_id)
+            instance.container_id = driver.create(spec)
+            db.commit()
             driver.start(instance.container_id)
         else:
-            image = db.get(DshImage, instance.image_id)
-            if image is None:
-                raise RuntimeError("image record disappeared")
-            instance.container_id = driver.create(_spec(instance, image, db))
-            db.commit()
+            driver.stop(instance.container_id)
             driver.start(instance.container_id)
         info = driver.wait_healthy(instance.container_id)
         instance.status = InstanceStatus.running

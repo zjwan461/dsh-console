@@ -314,6 +314,9 @@ class ProviderCredential(Base):
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="deepseek")
     ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     key_hint: Mapped[str] = mapped_column(String(8), nullable=False, default="")
+    # Optional OpenAI-compatible endpoint (LiteLLM / vLLM / a proxy). Empty means
+    # the provider's official host, i.e. no baseURL is written into settings.yaml.
+    base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[int | None] = mapped_column(
         BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
