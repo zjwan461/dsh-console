@@ -130,3 +130,12 @@ class FakeDriver:
             "mem_limit_bytes": 4 * 1024**3,
             "pids": 12,
         }
+
+    def commit(self, container_id: str, image_ref: str, changes: list[str]) -> str:
+        if container_id not in self.containers:
+            raise DriverError("no such container")
+        return "sha256:" + secrets.token_hex(32)
+
+    def pull(self, image_ref: str) -> None:
+        if not image_ref:
+            raise DriverError("empty image ref")

@@ -143,6 +143,7 @@ class Instance(Base):
     last_stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     health: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    user_image_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -333,6 +334,19 @@ class Setting(Base):
     )
 
 
+class SnapshotStatus(enum.StrEnum):
+    creating = "creating"
+    ready = "ready"
+    restoring = "restoring"
+    failed = "failed"
+
+
+class UserImageStatus(enum.StrEnum):
+    committing = "committing"
+    ready = "ready"
+    failed = "failed"
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -349,7 +363,153 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
+class UsageBucket(Base):
+    __tablename__ = "usage_bucket"
+    __table_args__ = (
+        UniqueConstraint("instance_id", "bucket_start", name="uk_usage_instance_hour"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    instance_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("instances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(BigInt, nullable=False, index=True)
+    bucket_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    active_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cpu_seconds: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    mem_mb_seconds: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    disk_bytes_max: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_rx_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_tx_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Snapshot(Base):
+    __tablename__ = "snapshots"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    instance_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("instances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[SnapshotStatus] = mapped_column(
+        enum_col(SnapshotStatus, "snapshot_status"), nullable=False, default=SnapshotStatus.creating
+    )
+    path: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    dsh_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    image_digest: Mapped[str | None] = mapped_column(String(71), nullable=True)
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    manifest: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class UserImage(Base):
+    __tablename__ = "user_images"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uk_uimages_user_name"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    instance_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("instances.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_ref: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    digest: Mapped[str | None] = mapped_column(String(71), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    base_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[UserImageStatus] = mapped_column(
+        enum_col(UserImageStatus, "user_image_status"),
+        nullable=False,
+        default=UserImageStatus.committing,
+    )
+    note: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class NodeMetric(Base):
+    __tablename__ = "node_metric"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    cpu_percent: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+    load1: Mapped[float] = mapped_column(Numeric(6, 2), nullable=False, default=0)
+    load5: Mapped[float] = mapped_column(Numeric(6, 2), nullable=False, default=0)
+    load15: Mapped[float] = mapped_column(Numeric(6, 2), nullable=False, default=0)
+    mem_total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mem_used_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    swap_used_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_rx_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    net_tx_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    containers_running: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    disks: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    gpu: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Announcement(Base):
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    body_md: Mapped[str] = mapped_column(Text, nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False, default="other")
+    priority: Mapped[str] = mapped_column(String(10), nullable=False, default="normal")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
+    assignee_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    last_reply_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    author_id: Mapped[int] = mapped_column(BigInt, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    attachments: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 __all__ = [
+    "Announcement",
     "AuditLog",
     "CredentialScope",
     "DshImage",
@@ -359,12 +519,20 @@ __all__ = [
     "InstanceStatus",
     "Invite",
     "LedgerReason",
+    "NodeMetric",
     "Plan",
     "ProviderCredential",
     "QuotaLedger",
     "Role",
     "Setting",
+    "Snapshot",
+    "SnapshotStatus",
+    "Ticket",
+    "TicketMessage",
+    "UsageBucket",
     "User",
+    "UserImage",
+    "UserImageStatus",
     "UserQuota",
     "UserSession",
     "UserStatus",

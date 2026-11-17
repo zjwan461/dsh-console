@@ -148,6 +148,55 @@ class ImagePatchIn(BaseModel):
     changelog: str | None = Field(default=None, max_length=2000)
 
 
+class SnapshotCreateIn(BaseModel):
+    note: str = Field(default="", max_length=200)
+
+
+class ImageCommitIn(BaseModel):
+    name: str = Field(min_length=2, max_length=31)
+    note: str = Field(default="", max_length=200)
+
+
+class VersionSwitchIn(BaseModel):
+    image_id: int
+
+
+class FileMkdirIn(BaseModel):
+    path: str = "/"
+    name: str = Field(min_length=1, max_length=255)
+
+
+class FileRenameIn(BaseModel):
+    path: str = Field(min_length=1, max_length=1024)
+    new_name: str = Field(min_length=1, max_length=255)
+
+
+class TicketCreateIn(BaseModel):
+    subject: str = Field(min_length=2, max_length=200)
+    category: Literal["usage", "quota", "bug", "other"] = "other"
+    priority: Literal["low", "normal", "high"] = "normal"
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class TicketMessageIn(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class TicketPatchIn(BaseModel):
+    status: Literal["open", "processing", "resolved", "closed"] | None = None
+    assignee_id: int | None = None
+
+
+class AnnouncementIn(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    body_md: str = Field(default="", max_length=20000)
+    level: Literal["info", "warning", "maintenance"] = "info"
+    status: Literal["draft", "published", "archived"] = "draft"
+    pinned: bool = False
+    publish_at: datetime | None = None
+    expire_at: datetime | None = None
+
+
 class SettingsIn(BaseModel):
     base_domain: str | None = Field(default=None, max_length=190)
     console_name: str | None = Field(default=None, max_length=64)

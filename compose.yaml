@@ -30,8 +30,12 @@ x-api-env: &api-env
   INSTANCE_GID: ${INSTANCE_GID:-1000}
   CADDY_ENABLED: "1"
   CADDY_ADMIN_URL: http://console-web:2019
+  CADDY_ACCESS_LOG_ENABLED: "1"
   PUBLIC_SCHEME: https
   JOBS_INLINE: "0"
+  STATS_INTERVAL_SECONDS: ${STATS_INTERVAL_SECONDS:-30}
+  USAGE_FLUSH_SECONDS: ${USAGE_FLUSH_SECONDS:-60}
+  IDLE_CHECK_SECONDS: ${IDLE_CHECK_SECONDS:-60}
 
 services:
   mysql:
@@ -88,6 +92,25 @@ services:
     volumes:
       # Root-equivalent: the API creates/starts/stops the per-user containers.
       # Never expose this service publicly; only Caddy reaches :8000.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/srv/dsh-console/data
+    networks: [console]
+
+  console-worker:
+    build:
+      context: ./api
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *api-env
+    depends_on:
+      console-api:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/srv/dsh-console/data
     networks: [console]

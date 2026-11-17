@@ -457,16 +457,17 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 
 ### GET `/admin/images`
 
-### POST `/admin/images/import`
+### POST `/admin/images/pull`（M3+ 已实现）
 
 ```json
 { "image_ref": "ghcr.io/acme/dsh:0.2.1-rc.5", "version": "0.2.1-rc.5",
-  "changelog": "...", "registry_auth": { "username": "...", "password": "..." } }
+  "changelog": "...", "is_default": true }
 ```
 
-`202 { job_id }`；`409 IMAGE_DUPLICATE`（digest 已存在）。
+`201` 返回镜像记录；`409 IMAGE_DUPLICATE`；`422 IMAGE_IMPORT_FAILED`。
+另有 `POST /admin/images` 只登记本机已有镜像（不 pull）。tar 上传在后续版本提供。
 
-### 上传 tar
+### 上传 tar（规划）
 
 1. `POST /admin/images/uploads` `{ "filename": "dsh.tar", "size": 123 }` → `{ upload_id, chunk_size }`
 2. `PUT /admin/images/uploads/{upload_id}?offset=` 分片
@@ -512,13 +513,9 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 
 ### GET `/admin/instances/{id}/logs?tail=500`
 
-### POST `/admin/instances/{id}/terminal-ticket`
+### WS `/admin/instances/{id}/terminal`
 
-```json
-{ "data": { "ticket": "...", "ws_url": "wss://console.dsh.example.com/api/v1/ws/instances/7/terminal?ticket=..." } }
-```
-
-ticket 60s 一次性。
+M5 实现：管理员 cookie 鉴权后直接升级 WebSocket，原始字节双向转发 `docker exec /bin/bash`。不需要单独的 ticket 接口。
 
 ## 13. 管理端：监控
 
@@ -663,19 +660,9 @@ data: {"at":"..."}
 
 每 15s 心跳；断线由浏览器 `EventSource` 自动重连（带 `Last-Event-ID`，服务端保留 5 分钟事件）。
 
-### WS `GET /ws/instances/{id}/terminal?ticket=`
+### WS `/admin/instances/{id}/terminal`
 
-仅管理员。文本帧 JSON：
-
-```json
-{ "type": "output", "data": "base64..." }
-{ "type": "input",  "data": "base64..." }
-{ "type": "resize", "cols": 120, "rows": 32 }
-{ "type": "exit",   "code": 0 }
-```
-
-服务端 → 客户端只发 `output/exit/error`；客户端 → 服务端发 `input/resize/ping`。
-空闲 30 分钟自动断开；审计记录开始/结束与操作者。
+仅管理员（会话 cookie 鉴权）。M5 为原始字节流：输出直接推给浏览器，输入直接写入 PTY；前端的简化控制台按行发送。xterm.js 与 resize 协议在后续增强。
 
 ## 16. 错误码
 

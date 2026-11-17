@@ -18,17 +18,17 @@
     └── secrets/master.key
 ```
 
-compose 服务（M2）：
+compose 服务（M3+）：
 
 | 服务 | 镜像 | 端口 | 说明 |
 |---|---|---|---|
 | `console-web` | 自建（Caddy + 前端 dist） | `443:443` | 唯一入口；动态路由由 API 生成 |
-| `console-api` | 自建（python） | 内网 8000 | 挂 `docker.sock`、`./data`；创建/启停用户实例 |
+| `console-api` | 自建（python） | 内网 8000 | 挂 `docker.sock`、`./data`；控制面 |
+| `console-worker` | 同上，`python -m app.worker` | 内网 9001 | 计量采样/落库、休眠、配额、节点指标、Caddy 日志 |
 | `mysql` | `mysql:8.4` | 内网 3306 | 数据卷 |
 | `redis` | `redis:7-alpine` | 内网 6379 | AOF everysec |
 
 `console-web` 与用户实例同在 `dsh-edge` 网络；实例不发布端口，只由 Caddy 按子域名反代。
-M3 再加入 `console-worker`（计量/休眠扫描）与 `node-exporter`。
 
 > `console-api` 挂载 `docker.sock` 等于宿主 root 权限。它只能被 Caddy 访问，**不要发布 8000**，也不要给它加额外挂载。
 
@@ -48,6 +48,7 @@ npm install && npm run dev      # http://127.0.0.1:5173
 - `ENV=dev` 自动建表并注入种子数据（三个套餐 + 默认设置 + 管理员）。
 - `REDIS_FAKE=1` 用 fakeredis 顶替 Redis，登录限流照常工作。
 - `DOCKER_FAKE=1` 用内存驱动模拟容器；`JOBS_INLINE=1` 让创建/启停同步完成，便于本地和测试。
+- 计量/休眠需要 worker，可另开一个终端：`python -m app.worker`（同样带上上面的环境变量；本地可设 `CADDY_ACCESS_LOG_ENABLED=0`）。
 - 前端 Vite 已把 `/api` 代理到 `127.0.0.1:8000`，无需 CORS。
 - 测试：`cd api && pytest -q`。
 - 生产镜像走 `alembic upgrade head`，不依赖 `create_all`。

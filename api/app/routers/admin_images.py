@@ -45,6 +45,48 @@ def list_images(
     return envelope(request, {"items": [image_dict(i) for i in rows], "total": len(rows)})
 
 
+@router.post("/pull", status_code=201)
+def pull_image(
+    payload: ImageRegisterIn,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if db.query(DshImage.id).filter(DshImage.image_ref == payload.image_ref).first():
+        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409)
+    try:
+        get_driver().pull(payload.image_ref)
+        info = get_driver().image_info(payload.image_ref)
+    except DriverError as exc:
+        raise ApiError("IMAGE_IMPORT_FAILED", str(exc), 422) from exc
+    if payload.is_default:
+        db.query(DshImage).filter(DshImage.is_default.is_(True)).update(
+            {DshImage.is_default: False}
+        )
+    image = DshImage(
+        version=payload.version,
+        image_ref=payload.image_ref,
+        digest=info.get("digest"),
+        size_bytes=info.get("size", 0),
+        arch=info.get("arch", "amd64"),
+        source="pull",
+        status=ImageStatus.ready,
+        is_default=payload.is_default,
+        changelog=payload.changelog,
+        labels=info.get("labels"),
+        created_by=admin.id,
+    )
+    db.add(image)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ApiError("IMAGE_DUPLICATE", "该镜像已登记", 409) from None
+    write_audit(db, request, admin, "admin.image_pull", "image", image.id, {"ref": image.image_ref})
+    db.commit()
+    return envelope(request, image_dict(image))
+
+
 @router.post("", status_code=201)
 def register_image(
     payload: ImageRegisterIn,

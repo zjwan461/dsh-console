@@ -200,3 +200,17 @@ class DockerDriver:
             "mem_limit_bytes": int(mem.get("limit") or 0),
             "pids": int((data.get("pids_stats") or {}).get("current") or 0),
         }
+
+    def commit(self, container_id: str, image_ref: str, changes: list[str]) -> str:
+        repository, _, tag = image_ref.rpartition(":")
+        if not repository:
+            repository, tag = image_ref, "latest"
+        container = self.client.containers.get(container_id)
+        image = container.commit(repository=repository, tag=tag, changes=changes)
+        return image.id
+
+    def pull(self, image_ref: str) -> None:
+        try:
+            self.client.images.pull(image_ref)
+        except Exception as exc:
+            raise DriverError(f"docker pull failed: {exc}") from exc

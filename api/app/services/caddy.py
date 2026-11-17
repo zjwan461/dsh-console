@@ -116,15 +116,30 @@ def build_config(db: Session, base_domain: str | None = None) -> dict:
             "terminal": True,
         }
     )
+    server: dict = {
+        "listen": [":443"],
+        "routes": routes,
+    }
+    if settings.caddy_access_log_enabled:
+        server["logs"] = {
+            "default_logger_name": "access",
+            "logs": {
+                "access": {
+                    "writer": {
+                        "output": "net",
+                        "address": f"console-worker:{settings.caddy_log_port}",
+                    },
+                    "encoder": {"format": "json"},
+                    "level": "INFO",
+                }
+            },
+        }
     return {
         "admin": {"listen": "0.0.0.0:2019"},
         "apps": {
             "http": {
                 "servers": {
-                    "srv0": {
-                        "listen": [":443"],
-                        "routes": routes,
-                    }
+                    "srv0": server,
                 }
             },
             "tls": {

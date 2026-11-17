@@ -57,7 +57,20 @@ class Settings(BaseSettings):
     public_scheme: str = "https"
     caddy_admin_url: str = "http://console-web:2019"
     caddy_enabled: bool = True
+    caddy_access_log_enabled: bool = True
+    caddy_log_listen: str = "0.0.0.0"
+    caddy_log_port: int = 9001
     jobs_inline: bool = False
+
+    # ── metering / worker (M3) ───────────────────────────────────────────
+    metering_enabled: bool = True
+    stats_interval_seconds: int = 30
+    usage_flush_seconds: int = 60
+    idle_check_seconds: int = 60
+    node_metrics_enabled: bool = True
+    node_metrics_interval: int = 30
+    node_metrics_retention_days: int = 7
+    active_network_threshold_bytes: int = 65536
 
     # capacity admission (see docs/02 §10)
     memory_reserve_mb: int = 4096

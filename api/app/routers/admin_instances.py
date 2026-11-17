@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from sqlalchemy.orm import Session
 
 from ..audit import write_audit
 from ..config import settings
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..deps import csrf_guard, require_admin
 from ..drivers import DriverError, get_driver
 from ..errors import ApiError, envelope
-from ..models import DshImage, Instance, InstanceStatus, User
+from ..models import DshImage, Instance, InstanceStatus, Role, User, UserSession
 from ..services.instances import (
     delete_instance,
     instance_view,
@@ -160,3 +169,82 @@ def logs(
         raise ApiError("DOCKER_UNAVAILABLE", str(exc), 503) from exc
     text = re.sub(r"token=[A-Za-z0-9_-]+", "token=***", text)
     return envelope(request, {"lines": text.splitlines()[-tail:]})
+
+
+@router.websocket("/{instance_id}/terminal")
+async def terminal(ws: WebSocket, instance_id: int):
+    sid = ws.cookies.get(settings.cookie_name)
+    user_id = None
+    with SessionLocal() as db:
+        session = db.get(UserSession, sid) if sid else None
+        if session is not None and session.revoked_at is None:
+            user = db.get(User, session.user_id)
+            if user is not None and user.role == Role.admin and user.deleted_at is None:
+                user_id = user.id
+    if user_id is None:
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+
+    with SessionLocal() as db:
+        instance = db.get(Instance, instance_id)
+        container_id = instance.container_id if instance else None
+    if not container_id:
+        await ws.send_text("实例没有运行中的容器\r\n")
+        await ws.close()
+        return
+
+    driver = get_driver()
+    if settings.docker_fake or not hasattr(driver, "client"):
+        await ws.send_text("FakeDriver terminal: 输入任意命令会原样回显。\r\n")
+        try:
+            while True:
+                message = await ws.receive()
+                if message.get("text"):
+                    await ws.send_text(f"$ {message['text']}")
+        except WebSocketDisconnect:
+            return
+
+    try:
+        container = driver.client.containers.get(container_id)
+        result = container.exec_run(["/bin/bash", "-l"], tty=True, stdin=True, socket=True)
+        raw = result.output._sock
+    except Exception as exc:
+        await ws.send_text(f"无法打开终端：{exc}\r\n")
+        await ws.close()
+        return
+
+    async def pump_output() -> None:
+        while True:
+            data = await asyncio.to_thread(raw.recv, 4096)
+            if not data:
+                break
+            await ws.send_bytes(data)
+
+    async def pump_input() -> None:
+        while True:
+            message = await ws.receive()
+            if message.get("bytes"):
+                await asyncio.to_thread(raw.sendall, message["bytes"])
+            elif message.get("text") is not None:
+                await asyncio.to_thread(raw.sendall, message["text"].encode())
+
+    output_task = asyncio.create_task(pump_output())
+    input_task = asyncio.create_task(pump_input())
+    try:
+        done, pending = await asyncio.wait(
+            {output_task, input_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+    finally:
+        for task in (output_task, input_task):
+            task.cancel()
+        try:
+            raw.close()
+        except Exception:
+            pass
+        try:
+            await ws.close()
+        except Exception:
+            pass

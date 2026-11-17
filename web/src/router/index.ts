@@ -22,7 +22,35 @@ const router = createRouter({
       children: [
         { path: '', name: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '工作台' } },
         { path: 'usage', name: 'usage', component: () => import('@/views/UsageView.vue'), meta: { title: '用量' } },
+        { path: 'snapshots', name: 'snapshots', component: () => import('@/views/SnapshotsView.vue'), meta: { title: '快照' } },
+        { path: 'images', name: 'my-images', component: () => import('@/views/MyImagesView.vue'), meta: { title: '我的镜像' } },
+        { path: 'files', name: 'files', component: () => import('@/views/FilesView.vue'), meta: { title: '文件' } },
+        { path: 'tickets', name: 'tickets', component: () => import('@/views/TicketsView.vue'), meta: { title: '工单' } },
         { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '设置' } },
+        {
+          path: 'admin/metrics',
+          name: 'admin-metrics',
+          component: () => import('@/views/admin/MetricsView.vue'),
+          meta: { admin: true, title: '监控总览' },
+        },
+        {
+          path: 'admin/instances',
+          name: 'admin-instances',
+          component: () => import('@/views/admin/InstancesView.vue'),
+          meta: { admin: true, title: '全站实例' },
+        },
+        {
+          path: 'admin/tickets',
+          name: 'admin-tickets',
+          component: () => import('@/views/admin/TicketsView.vue'),
+          meta: { admin: true, title: '工单队列' },
+        },
+        {
+          path: 'admin/announcements',
+          name: 'admin-announcements',
+          component: () => import('@/views/admin/AnnouncementsView.vue'),
+          meta: { admin: true, title: '公告' },
+        },
         {
           path: 'admin/images',
           name: 'admin-images',

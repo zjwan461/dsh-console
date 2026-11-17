@@ -147,9 +147,16 @@ def host_path(path: str) -> str:
 
 
 def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
+    image_ref = image.image_ref
+    if instance.user_image_id:
+        from ..models import UserImage
+
+        user_image = db.get(UserImage, instance.user_image_id)
+        if user_image is not None and user_image.status.value == "ready":
+            image_ref = user_image.image_ref
     return ContainerSpec(
         name=instance.container_name,
-        image=image.image_ref,
+        image=image_ref,
         env=_env(instance, db),
         mounts=[
             (host_path(instance.data_path), "/data/dsh", False),
@@ -374,7 +381,13 @@ def start_instance(instance_id: int, actor_id: int | None = None) -> None:
         _unlock(instance_id)
 
 
-def stop_instance(instance_id: int, *, sleep: bool = False, actor_id: int | None = None) -> None:
+def stop_instance(
+    instance_id: int,
+    *,
+    sleep: bool = False,
+    actor_id: int | None = None,
+    reason: str | None = None,
+) -> None:
     from ..db import SessionLocal
 
     if not _lock(instance_id):
@@ -396,9 +409,15 @@ def stop_instance(instance_id: int, *, sleep: bool = False, actor_id: int | None
         clear_token(instance.id)
         instance.status = InstanceStatus.sleeping if sleep else InstanceStatus.stopped
         instance.health = "unknown"
+        instance.status_reason = reason
         instance.last_stopped_at = utcnow()
         log_event(
-            db, instance, "sleep" if sleep else "stop", InstanceStatus.stopping, instance.status
+            db,
+            instance,
+            "sleep" if sleep else "stop",
+            InstanceStatus.stopping,
+            instance.status,
+            reason or "",
         )
         db.commit()
         _apply_caddy(db)

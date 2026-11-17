@@ -3,10 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
+  Bell,
   Box,
+  ChatDotRound,
   DataAnalysis,
   Document,
+  Folder,
   HomeFilled,
+  Monitor,
+  Picture,
   Setting,
   Tickets,
   User as UserIcon,
@@ -23,10 +28,14 @@ const consoleName = ref('优墨云舱')
 const activeMenu = computed(() => route.path)
 
 const adminMenus = [
+  { path: '/admin/metrics', label: '监控', icon: Monitor },
+  { path: '/admin/instances', label: '实例', icon: DataAnalysis },
   { path: '/admin/users', label: '用户', icon: UserFilled },
   { path: '/admin/plans', label: '套餐', icon: Tickets },
   { path: '/admin/images', label: '版本', icon: Box },
   { path: '/admin/invites', label: '邀请码', icon: Document },
+  { path: '/admin/tickets', label: '工单', icon: ChatDotRound },
+  { path: '/admin/announcements', label: '公告', icon: Bell },
   { path: '/admin/audit', label: '审计', icon: DataAnalysis },
   { path: '/admin/settings', label: '系统设置', icon: Setting },
 ]
@@ -69,6 +78,22 @@ onMounted(async () => {
         <el-menu-item index="/usage">
           <el-icon><DataAnalysis /></el-icon>
           <span>用量</span>
+        </el-menu-item>
+        <el-menu-item index="/snapshots">
+          <el-icon><Picture /></el-icon>
+          <span>快照</span>
+        </el-menu-item>
+        <el-menu-item index="/images">
+          <el-icon><Box /></el-icon>
+          <span>我的镜像</span>
+        </el-menu-item>
+        <el-menu-item index="/files">
+          <el-icon><Folder /></el-icon>
+          <span>文件</span>
+        </el-menu-item>
+        <el-menu-item index="/tickets">
+          <el-icon><ChatDotRound /></el-icon>
+          <span>工单</span>
         </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>
