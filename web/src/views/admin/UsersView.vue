@@ -139,7 +139,11 @@ async function submitEdit() {
 }
 
 function openReset(row: AdminUser) {
-  Object.assign(resetForm, { id: row.id, username: row.username, password: '' })
+  Object.assign(resetForm, {
+    id: row.id,
+    username: row.username,
+    password: '',
+  })
   resetVisible.value = true
 }
 
@@ -181,7 +185,12 @@ async function openQuota(row: AdminUser) {
   try {
     const data = await api.get<AdminQuota>(`/admin/quotas/${row.id}`)
     quota.value = data
-    Object.assign(grantForm, { id: row.id, username: row.username, minutes: 600, reason: '' })
+    Object.assign(grantForm, {
+      id: row.id,
+      username: row.username,
+      minutes: 600,
+      reason: '',
+    })
     quotaVisible.value = true
   } catch (error) {
     ElMessage.error(errorMessage(error))
@@ -218,6 +227,17 @@ function statusTag(status: string): 'success' | 'danger' | 'info' {
   if (status === 'active') return 'success'
   if (status === 'disabled') return 'danger'
   return 'info'
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  active: '正常',
+  disabled: '已禁用',
+  pending: '待激活',
+  deleted: '已删除',
+}
+
+function statusText(status: string): string {
+  return STATUS_TEXT[status] ?? status
 }
 
 onMounted(async () => {
@@ -261,9 +281,11 @@ onMounted(async () => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="96">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="statusTag(row.status)" size="small">
+              {{ statusText(row.status) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="角色" width="90">
@@ -285,15 +307,19 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="最近登录" width="170">
           <template #default="{ row }">
-            <span class="muted">{{ row.last_login_at?.replace('T', ' ').slice(0, 16) ?? '从未' }}</span>
+            <span class="muted">{{
+              row.last_login_at?.replace('T', ' ').slice(0, 16) ?? '从未'
+            }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="268" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openQuota(row)">配额</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
-            <el-button link type="danger" @click="removeUser(row)">删除</el-button>
+            <div class="row-actions">
+              <el-button link type="primary" @click="openQuota(row)">配额</el-button>
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="primary" @click="openReset(row)">重置密码</el-button>
+              <el-button link type="danger" @click="removeUser(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -381,7 +407,12 @@ onMounted(async () => {
 
     <el-dialog v-model="resetVisible" title="重置密码" width="420px">
       <p class="muted">为 {{ resetForm.username }} 设置临时密码，所有会话将下线。</p>
-      <el-input v-model="resetForm.password" type="password" show-password placeholder="至少 8 位" />
+      <el-input
+        v-model="resetForm.password"
+        type="password"
+        show-password
+        placeholder="至少 8 位"
+      />
       <template #footer>
         <el-button @click="resetVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submitReset">确认重置</el-button>
@@ -391,10 +422,18 @@ onMounted(async () => {
     <el-dialog v-model="quotaVisible" title="配额与时长" width="520px">
       <template v-if="quota">
         <div class="quota-grid">
-          <div><span class="muted">套餐</span><strong>{{ quota.plan }}</strong></div>
-          <div><span class="muted">已用</span><strong>{{ quota.used_minutes }} 分钟</strong></div>
-          <div><span class="muted">剩余</span><strong>{{ quota.remaining_minutes }} 分钟</strong></div>
-          <div><span class="muted">总额</span><strong>{{ quota.total_minutes }} 分钟</strong></div>
+          <div>
+            <span class="muted">套餐</span><strong>{{ quota.plan }}</strong>
+          </div>
+          <div>
+            <span class="muted">已用</span><strong>{{ quota.used_minutes }} 分钟</strong>
+          </div>
+          <div>
+            <span class="muted">剩余</span><strong>{{ quota.remaining_minutes }} 分钟</strong>
+          </div>
+          <div>
+            <span class="muted">总额</span><strong>{{ quota.total_minutes }} 分钟</strong>
+          </div>
         </div>
         <el-divider />
         <el-form label-width="90px">
@@ -424,6 +463,13 @@ onMounted(async () => {
 
 .user-cell .muted {
   font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
 }
 
 .quota-grid {

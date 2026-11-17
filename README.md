@@ -79,6 +79,26 @@ npm run dev          # http://127.0.0.1:5173，/api 代理到 :8000
 - 计量与休眠需要 worker：另开终端 `python -m app.worker`（同样环境变量，本地加 `CADDY_ACCESS_LOG_ENABLED=0`）。
 - 接口文档：`http://127.0.0.1:8000/api/docs`。
 
+### 造演示数据 / 截图
+
+```bash
+python scripts/seed_demo.py     # 5 个用户、3 个版本、3 个实例、1 个工单与公告（连本地 API）
+pip install playwright          # 截图工具，复用本机 Chrome，不下载浏览器
+python scripts/shots.py --out shots/before
+```
+
+`shots.py` 会登录并截取工作台、用量、版本（含「仓库版本」页）、用户管理等页面，产物在 `shots/`（已 gitignore）。
+
+## 界面设计
+
+配色取「墨 + 纸」：深墨侧栏配暖白画布，主色为青墨 `#2f6f63`，辅以铜色 `#a9713f`。全部 token 在 `web/src/styles/main.css`，Element Plus 变量同源覆盖，因此新增页面自动继承字体、圆角、表格与按钮样式。
+
+- 侧栏：工作区 / 管理两组，底部账号卡片；≤1080px 收成图标栏。
+- 顶栏：面包屑 + 运行时状态胶囊（仅管理员）；页面标题只在内容区出现一次。
+- 数据卡片：`stat-card` 提供图标片、主数值与说明三段式。
+- 空状态：统一的 `.blank` 虚线块，替代 Element 默认插画。
+- 登录页：左侧品牌叙事 + 右侧表单，窄屏自动隐藏左栏。
+
 ## 真机回归脚本
 
 `scripts/` 下是可复现的远端验证工具（不依赖本地 Docker）。**所有主机信息都从环境变量读取，仓库里不含任何 IP、端口或口令。**

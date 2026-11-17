@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import {
   Bell,
   Box,
+  Camera,
   ChatDotRound,
-  DataAnalysis,
+  Cpu,
   Document,
-  Folder,
+  FolderOpened,
   HomeFilled,
   Monitor,
-  Picture,
+  PriceTag,
   Setting,
+  SwitchButton,
   Tickets,
-  User as UserIcon,
+  TrendCharts,
   UserFilled,
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -24,21 +25,38 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const consoleName = ref('优墨云舱')
+const runtimeOk = ref<boolean | null>(null)
 
 const activeMenu = computed(() => route.path)
+const pageTitle = computed(() => (route.meta.title as string) ?? '工作台')
+const isAdminArea = computed(() => route.path.startsWith('/admin'))
+
+const workspaceMenus = [
+  { path: '/', label: '工作台', icon: HomeFilled },
+  { path: '/usage', label: '用量', icon: TrendCharts },
+  { path: '/snapshots', label: '快照', icon: Camera },
+  { path: '/images', label: '我的镜像', icon: Box },
+  { path: '/files', label: '文件', icon: FolderOpened },
+  { path: '/tickets', label: '工单', icon: ChatDotRound },
+  { path: '/settings', label: '设置', icon: Setting },
+]
 
 const adminMenus = [
   { path: '/admin/metrics', label: '监控', icon: Monitor },
-  { path: '/admin/instances', label: '实例', icon: DataAnalysis },
+  { path: '/admin/instances', label: '实例', icon: Cpu },
   { path: '/admin/users', label: '用户', icon: UserFilled },
-  { path: '/admin/plans', label: '套餐', icon: Tickets },
+  { path: '/admin/plans', label: '套餐', icon: PriceTag },
   { path: '/admin/images', label: '版本', icon: Box },
-  { path: '/admin/invites', label: '邀请码', icon: Document },
+  { path: '/admin/invites', label: '邀请码', icon: Tickets },
   { path: '/admin/tickets', label: '工单', icon: ChatDotRound },
   { path: '/admin/announcements', label: '公告', icon: Bell },
-  { path: '/admin/audit', label: '审计', icon: DataAnalysis },
+  { path: '/admin/audit', label: '审计', icon: Document },
   { path: '/admin/settings', label: '系统设置', icon: Setting },
 ]
+
+const initial = computed(() =>
+  (auth.user?.display_name || auth.user?.username || '?').slice(0, 1).toUpperCase(),
+)
 
 async function onCommand(command: string) {
   if (command === 'logout') {
@@ -56,208 +74,440 @@ onMounted(async () => {
   } catch {
     // non-blocking: the default name is fine
   }
+  // `/system/health` is admin-only, so only ask for it when the user can see it.
+  if (auth.isAdmin) {
+    try {
+      const health = await api.get<{ docker: { ok: boolean } }>('/system/health')
+      runtimeOk.value = health.docker.ok
+    } catch {
+      runtimeOk.value = false
+    }
+  }
 })
 </script>
 
 <template>
-  <el-container class="shell">
-    <el-aside width="220px" class="aside">
-      <div class="brand">
-        <div class="brand-mark">D</div>
-        <div>
-          <div class="brand-name">{{ consoleName }}</div>
-          <div class="brand-sub">DeepSeek Harness</div>
-        </div>
-      </div>
+  <div class="shell">
+    <aside class="aside">
+      <router-link to="/" class="brand">
+        <span class="brand-mark">墨</span>
+        <span class="brand-text">
+          <span class="brand-name">{{ consoleName }}</span>
+          <span class="brand-sub">DeepSeek Harness</span>
+        </span>
+      </router-link>
 
-      <el-menu :default-active="activeMenu" router class="menu">
-        <el-menu-item index="/">
-          <el-icon><HomeFilled /></el-icon>
-          <span>工作台</span>
-        </el-menu-item>
-        <el-menu-item index="/usage">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>用量</span>
-        </el-menu-item>
-        <el-menu-item index="/snapshots">
-          <el-icon><Picture /></el-icon>
-          <span>快照</span>
-        </el-menu-item>
-        <el-menu-item index="/images">
-          <el-icon><Box /></el-icon>
-          <span>我的镜像</span>
-        </el-menu-item>
-        <el-menu-item index="/files">
-          <el-icon><Folder /></el-icon>
-          <span>文件</span>
-        </el-menu-item>
-        <el-menu-item index="/tickets">
-          <el-icon><ChatDotRound /></el-icon>
-          <span>工单</span>
-        </el-menu-item>
-        <el-menu-item index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>设置</span>
-        </el-menu-item>
-        <template v-if="auth.isAdmin">
-          <div class="menu-group">管理员</div>
-          <el-menu-item v-for="item in adminMenus" :key="item.path" :index="item.path">
+      <nav class="nav">
+        <div class="nav-label">工作区</div>
+        <el-menu :default-active="activeMenu" router class="menu">
+          <el-menu-item v-for="item in workspaceMenus" :key="item.path" :index="item.path">
             <el-icon><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
           </el-menu-item>
+        </el-menu>
+
+        <template v-if="auth.isAdmin">
+          <div class="nav-label">
+            管理
+            <span class="nav-label-tag">ADMIN</span>
+          </div>
+          <el-menu :default-active="activeMenu" router class="menu">
+            <el-menu-item v-for="item in adminMenus" :key="item.path" :index="item.path">
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+            </el-menu-item>
+          </el-menu>
         </template>
-      </el-menu>
-    </el-aside>
+      </nav>
 
-    <el-container>
-      <el-header class="header">
-        <div class="header-title">{{ route.meta.title ?? '工作台' }}</div>
-        <el-dropdown trigger="click" @command="onCommand">
-          <span class="user-chip">
-            <el-avatar :size="28" class="avatar">
-              {{ (auth.user?.display_name || auth.user?.username || '?').slice(0, 1) }}
-            </el-avatar>
-            <span class="user-name">{{ auth.user?.display_name || auth.user?.username }}</span>
-            <el-tag v-if="auth.isAdmin" size="small" type="warning" effect="plain">管理员</el-tag>
+      <el-dropdown trigger="click" class="account" @command="onCommand">
+        <div class="account-card">
+          <span class="avatar">{{ initial }}</span>
+          <span class="account-text">
+            <span class="account-name">{{ auth.user?.display_name || auth.user?.username }}</span>
+            <span class="account-role">
+              {{ auth.isAdmin ? '管理员' : '成员' }} · @{{ auth.user?.username }}
+            </span>
           </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="settings">
-                <el-icon><UserIcon /></el-icon> 个人设置
-              </el-dropdown-item>
-              <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </el-header>
+          <el-icon class="account-caret"><SwitchButton /></el-icon>
+        </div>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="settings">个人设置</el-dropdown-item>
+            <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </aside>
 
-      <el-main class="main">
+    <div class="body">
+      <header class="header">
+        <div class="crumbs">
+          <span class="crumb-root">{{ isAdminArea ? '管理' : '工作区' }}</span>
+          <span class="crumb-sep">/</span>
+          <span class="crumb-current">{{ pageTitle }}</span>
+        </div>
+        <div class="header-right">
+          <span v-if="runtimeOk !== null" class="runtime" :class="{ bad: !runtimeOk }">
+            <span class="dot" />
+            {{ runtimeOk ? '运行时正常' : '运行时异常' }}
+          </span>
+        </div>
+      </header>
+
+      <main class="main">
         <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+      </main>
+    </div>
+  </div>
 </template>
 
 <style scoped>
 .shell {
   min-height: 100vh;
+  display: flex;
+  background: var(--paper);
 }
 
+/* ── sidebar ─────────────────────────────────────────────────────────── */
+
 .aside {
-  background: #0f172a;
-  color: #cbd5e1;
+  width: 244px;
+  flex: 0 0 244px;
+  background:
+    radial-gradient(360px 220px at 20% 0%, rgba(47, 111, 99, 0.22), transparent 70%), var(--ink-900);
+  color: #c6cfd8;
   display: flex;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 20px 18px 16px;
+  gap: 11px;
+  padding: 22px 20px 20px;
+  color: inherit;
 }
 
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #4d6bfe, #7c9bff);
   display: grid;
   place-items: center;
-  font-weight: 800;
-  color: #fff;
+  background: #f5f2ec;
+  color: var(--ink-900);
+  font-family: 'Songti SC', 'STSong', Georgia, serif;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: inset 0 0 0 1px rgba(15, 21, 27, 0.08);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .brand-name {
-  color: #f8fafc;
-  font-weight: 650;
+  color: #f3f1ec;
+  font-weight: 600;
   font-size: 15px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .brand-sub {
-  color: #64748b;
-  font-size: 11px;
-  margin-top: 2px;
+  color: #6d7c8a;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+.nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+.nav-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 22px 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: #64727f;
+  text-transform: uppercase;
+}
+
+.nav-label-tag {
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #b99a72;
+  border: 1px solid rgba(185, 154, 114, 0.32);
 }
 
 .menu {
   border-right: none;
   background: transparent;
   --el-menu-bg-color: transparent;
-  --el-menu-text-color: #cbd5e1;
-  --el-menu-hover-bg-color: rgba(148, 163, 184, 0.12);
+  --el-menu-text-color: #aeb9c4;
+  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.055);
   --el-menu-active-color: #ffffff;
-}
-
-.menu :deep(.el-menu-item.is-active) {
-  background: rgba(77, 107, 254, 0.28);
-  border-radius: 8px;
-  margin: 0 10px;
+  --el-menu-item-height: 38px;
 }
 
 .menu :deep(.el-menu-item) {
-  margin: 2px 10px;
+  margin: 1px 10px;
   border-radius: 8px;
-  height: 42px;
+  height: 38px;
+  line-height: 38px;
+  font-size: 13.5px;
+  padding-left: 14px !important;
+  position: relative;
 }
 
-.menu-group {
-  padding: 18px 20px 6px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: #64748b;
-  text-transform: uppercase;
+.menu :deep(.el-menu-item .el-icon) {
+  color: #7d8b98;
+  margin-right: 10px;
+  font-size: 16px;
+  transition: color 0.15s ease;
 }
 
-.header {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid var(--dsh-border);
+.menu :deep(.el-menu-item:hover) {
+  color: #eef2f5;
 }
 
-.header-title {
-  font-weight: 600;
+.menu :deep(.el-menu-item:hover .el-icon) {
+  color: #cfd8e0;
 }
 
-.user-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.menu :deep(.el-menu-item.is-active) {
+  background: rgba(255, 255, 255, 0.075);
+  color: #fff;
+  font-weight: 500;
+}
+
+.menu :deep(.el-menu-item.is-active::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 2.5px;
+  border-radius: 3px;
+  background: #7fbfae;
+}
+
+.menu :deep(.el-menu-item.is-active .el-icon) {
+  color: #9ed3c4;
+}
+
+/* ── account ─────────────────────────────────────────────────────────── */
+
+.account {
+  padding: 12px 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   cursor: pointer;
-  outline: none;
+}
+
+.account-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.account-card:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .avatar {
-  background: #4d6bfe;
-  color: #fff;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: rgba(127, 191, 174, 0.16);
+  color: #a9d6c8;
   font-weight: 600;
+  font-size: 13px;
 }
 
-.user-name {
+.account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.account-name {
+  color: #eef2f5;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-role {
+  color: #71808e;
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-caret {
+  color: #5f6e7c;
   font-size: 14px;
 }
 
-.main {
-  padding: 0;
-  background: var(--dsh-bg);
+/* ── main column ─────────────────────────────────────────────────────── */
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-@media (max-width: 860px) {
+.header {
+  height: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  background: rgba(245, 242, 236, 0.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.crumb-sep {
+  color: #c4bcae;
+}
+
+.crumb-current {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.runtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #4d7a63;
+  background: #eef5f0;
+  border: 1px solid #dcebe1;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.runtime .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4f8a68;
+  box-shadow: 0 0 0 3px rgba(79, 138, 104, 0.14);
+}
+
+.runtime.bad {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: #efd6d2;
+}
+
+.runtime.bad .dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(169, 74, 63, 0.14);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 1080px) {
   .aside {
-    width: 72px !important;
-  }
-  .brand-name,
-  .brand-sub,
-  .menu span,
-  .menu-group {
-    display: none;
+    width: 76px;
+    flex-basis: 76px;
   }
   .brand {
     justify-content: center;
-    padding: 16px 0;
+    padding: 18px 0 14px;
+  }
+  .brand-text,
+  .nav-label,
+  .account-text,
+  .account-caret {
+    display: none;
+  }
+  .menu :deep(.el-menu-item) {
+    justify-content: center;
+    padding-left: 0 !important;
+    margin: 2px 12px;
+  }
+  .menu :deep(.el-menu-item span) {
+    display: none;
+  }
+  .menu :deep(.el-menu-item .el-icon) {
+    margin-right: 0;
+  }
+  .menu :deep(.el-menu-item.is-active::before) {
+    display: none;
+  }
+  .account {
+    display: flex;
+    justify-content: center;
+    padding: 12px 0 16px;
+  }
+  .account-card {
+    justify-content: center;
+    padding: 6px;
+  }
+  .header {
+    padding: 0 20px;
+  }
+}
+
+@media (max-width: 680px) {
+  .runtime {
+    display: none;
   }
 }
 </style>

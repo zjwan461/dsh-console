@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Calendar, Cpu, Coin, Timer } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useInstanceStore } from '@/stores/instance'
@@ -125,19 +126,36 @@ onUnmounted(() => store.stopPolling())
         <h1>工作台</h1>
         <p>欢迎回来，{{ overview?.user.display_name || overview?.user.username }}</p>
       </div>
-      <el-button v-if="!instance" type="primary" @click="openCreate">创建我的云电脑</el-button>
-      <el-button v-else-if="store.isRunning" type="primary" :loading="store.busy" @click="openInstance">
-        打开云舱
-      </el-button>
-      <el-button v-else :loading="store.busy" :disabled="store.isTransitional" @click="openInstance">
-        {{ instance.status === 'sleeping' ? '唤醒并打开' : '启动并打开' }}
-      </el-button>
+      <div class="actions">
+        <el-button v-if="!instance" type="primary" @click="openCreate">创建我的云电脑</el-button>
+        <el-button
+          v-else-if="store.isRunning"
+          type="primary"
+          :loading="store.busy"
+          @click="openInstance"
+        >
+          打开云舱
+        </el-button>
+        <el-button
+          v-else
+          :loading="store.busy"
+          :disabled="store.isTransitional"
+          @click="openInstance"
+        >
+          {{ instance.status === 'sleeping' ? '唤醒并打开' : '启动并打开' }}
+        </el-button>
+      </div>
     </div>
 
     <template v-if="overview">
       <div class="grid grid-4">
         <div class="card stat-card">
-          <div class="label">剩余时长</div>
+          <div class="stat-top">
+            <span class="label">剩余时长</span>
+            <span class="chip"
+              ><el-icon><Timer /></el-icon
+            ></span>
+          </div>
           <div class="value">{{ hours(overview.quota.remaining_minutes) }}</div>
           <div class="hint">
             已用 {{ hours(overview.quota.used_minutes) }} / 共
@@ -145,48 +163,70 @@ onUnmounted(() => store.stopPolling())
           </div>
         </div>
         <div class="card stat-card">
-          <div class="label">当前规格</div>
-          <div class="value">{{ overview.quota.cpu_cores }}C / {{ gb(overview.quota.memory_mb) }}</div>
+          <div class="stat-top">
+            <span class="label">当前规格</span>
+            <span class="chip slate"
+              ><el-icon><Cpu /></el-icon
+            ></span>
+          </div>
+          <div class="value">
+            {{ overview.quota.cpu_cores }}<small>C</small> /
+            {{ gb(overview.quota.memory_mb) }}
+          </div>
           <div class="hint">套餐：{{ overview.quota.plan ?? '未分配' }}</div>
         </div>
         <div class="card stat-card">
-          <div class="label">磁盘</div>
-          <div class="value">{{ overview.quota.disk_gb }} GB</div>
-          <div class="hint">数据目录配额</div>
+          <div class="stat-top">
+            <span class="label">磁盘配额</span>
+            <span class="chip bronze"
+              ><el-icon><Coin /></el-icon
+            ></span>
+          </div>
+          <div class="value">{{ overview.quota.disk_gb }}<small>GB</small></div>
+          <div class="hint">实例数据目录上限</div>
         </div>
         <div class="card stat-card">
-          <div class="label">计费周期</div>
-          <div class="value" style="font-size: 18px">{{ overview.quota.cycle_end }}</div>
-          <div class="hint">按活跃时长扣减</div>
+          <div class="stat-top">
+            <span class="label">计费周期</span>
+            <span class="chip"
+              ><el-icon><Calendar /></el-icon
+            ></span>
+          </div>
+          <div class="value date">{{ overview.quota.cycle_end }}</div>
+          <div class="hint">按活跃时长扣减，闲置不计费</div>
         </div>
       </div>
 
-      <div class="card instance-card" style="margin-top: 16px">
+      <div class="card instance-card">
         <div class="instance-head">
           <div>
             <div class="instance-title">
               <h3>我的云舱</h3>
-              <el-tag :type="meta.type as 'success' | 'info' | 'warning' | 'danger'" effect="plain">
+              <span class="status-pill" :class="instance?.status ?? 'none'">
+                <span class="dot" />
                 {{ meta.text }}
-              </el-tag>
+              </span>
             </div>
-            <div v-if="instance" class="instance-url mono">{{ instance.url }}</div>
-            <div v-else class="muted">还没有实例。创建后你会得到独立子域名、数据目录与时长配额。</div>
+            <div v-if="instance" class="instance-url mono">
+              {{ instance.url }}
+            </div>
+            <div v-else class="muted instance-sub">
+              还没有实例。创建后你会得到独立子域名、数据目录与时长配额。
+            </div>
           </div>
           <div v-if="instance" class="instance-actions">
             <el-button
-              v-if="instance.status !== 'stopped' && instance.status !== 'sleeping' && instance.status !== 'error'"
+              v-if="
+                instance.status !== 'stopped' &&
+                instance.status !== 'sleeping' &&
+                instance.status !== 'error'
+              "
               :disabled="store.isTransitional"
               @click="act('stop')"
             >
               停止
             </el-button>
-            <el-button
-              v-else
-              type="primary"
-              :disabled="store.isTransitional"
-              @click="act('start')"
-            >
+            <el-button v-else type="primary" :disabled="store.isTransitional" @click="act('start')">
               启动
             </el-button>
             <el-button :disabled="store.isTransitional" @click="act('restart')">重启</el-button>
@@ -199,13 +239,16 @@ onUnmounted(() => store.stopPolling())
           type="error"
           :closable="false"
           show-icon
-          style="margin-top: 12px"
+          style="margin-top: 14px"
           :title="instance.error || '实例异常，请尝试重启'"
         />
 
         <template v-if="instance">
           <div class="spec-grid">
-            <div><span class="muted">版本</span><strong>{{ instance.dsh_version }}</strong></div>
+            <div>
+              <span class="muted">DSH 版本</span>
+              <strong>{{ instance.dsh_version }}</strong>
+            </div>
             <div>
               <span class="muted">规格</span>
               <strong>
@@ -213,16 +256,22 @@ onUnmounted(() => store.stopPolling())
                 {{ instance.spec.disk_gb }}GB
               </strong>
             </div>
-            <div><span class="muted">最近启动</span><strong>{{ shortDate(instance.last_started_at) }}</strong></div>
-            <div><span class="muted">自动休眠</span><strong>{{ instance.idle_timeout_seconds / 60 }} 分钟</strong></div>
+            <div>
+              <span class="muted">最近启动</span>
+              <strong>{{ shortDate(instance.last_started_at) }}</strong>
+            </div>
+            <div>
+              <span class="muted">自动休眠</span>
+              <strong>{{ instance.idle_timeout_seconds / 60 }} 分钟</strong>
+            </div>
           </div>
 
-          <el-divider style="margin: 18px 0 12px" />
+          <div class="divider" />
           <div class="events-head">
             <span class="muted">最近事件</span>
             <el-button link type="primary" @click="store.loadEvents()">刷新</el-button>
           </div>
-          <el-timeline v-if="store.events.length" style="padding-left: 4px; margin-top: 8px">
+          <el-timeline v-if="store.events.length" class="events">
             <el-timeline-item
               v-for="event in store.events"
               :key="event.id"
@@ -234,14 +283,42 @@ onUnmounted(() => store.stopPolling())
               <span v-if="event.message" class="muted"> · {{ event.message }}</span>
             </el-timeline-item>
           </el-timeline>
-          <el-empty v-else description="暂无事件" :image-size="48" />
+          <div v-else class="blank small">
+            <strong>暂无事件</strong>
+            实例的状态变化会记录在这里
+          </div>
         </template>
-        <el-empty v-else description="点击右上角创建你的第一间云舱" :image-size="90" />
+
+        <div v-else class="blank">
+          <div class="blank-icon">
+            <el-icon><Cpu /></el-icon>
+          </div>
+          <strong>还没有云舱</strong>
+          创建后你会得到独立子域名、数据目录与时长配额
+          <div class="blank-action">
+            <el-button type="primary" @click="openCreate">创建我的云电脑</el-button>
+          </div>
+        </div>
       </div>
 
-      <div class="card" style="margin-top: 16px">
-        <div class="section-head"><h3>公告</h3></div>
-        <el-empty v-if="overview.announcements.length === 0" description="暂无公告" :image-size="60" />
+      <div class="card announcement-card">
+        <div class="section-head">
+          <h3>公告</h3>
+          <span class="hint">{{ overview.announcements.length }} 条</span>
+        </div>
+        <ul v-if="overview.announcements.length" class="announcements">
+          <li v-for="item in overview.announcements" :key="item.id">
+            <span class="announce-dot" :class="item.level" />
+            <div>
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.body_md }}</p>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="blank small">
+          <strong>暂无公告</strong>
+          平台更新与维护通知会显示在这里
+        </div>
       </div>
     </template>
 
@@ -263,7 +340,11 @@ onUnmounted(() => store.stopPolling())
               :value="image.id"
             />
           </el-select>
-          <div v-if="(store.options?.images.length ?? 0) === 0" class="muted" style="font-size: 12px">
+          <div
+            v-if="(store.options?.images.length ?? 0) === 0"
+            class="muted"
+            style="font-size: 12px"
+          >
             管理员还没有导入可用版本。
           </div>
         </el-form-item>
@@ -273,8 +354,9 @@ onUnmounted(() => store.stopPolling())
         </el-form-item>
         <el-form-item v-if="store.options" label="宿主余量">
           <span class="muted" style="font-size: 12px">
-            可分配内存 {{ Math.round(store.options.capacity.mem_limit_mb / 1024) }} GB，
-            已分配 {{ Math.round(store.options.capacity.mem_committed_mb / 1024) }} GB
+            可分配内存
+            {{ Math.round(store.options.capacity.mem_limit_mb / 1024) }} GB， 已分配
+            {{ Math.round(store.options.capacity.mem_committed_mb / 1024) }} GB
           </span>
         </el-form-item>
       </el-form>
@@ -295,7 +377,7 @@ onUnmounted(() => store.stopPolling())
 
 <style scoped>
 .instance-card {
-  min-height: 220px;
+  min-height: 200px;
 }
 
 .instance-head {
@@ -315,13 +397,19 @@ onUnmounted(() => store.stopPolling())
 .instance-title h3 {
   margin: 0;
   font-size: 16px;
+  font-weight: 600;
 }
 
 .instance-url {
-  margin-top: 6px;
-  color: var(--dsh-muted);
+  margin-top: 8px;
+  color: var(--muted);
   font-size: 12px;
   word-break: break-all;
+}
+
+.instance-sub {
+  margin-top: 6px;
+  font-size: 13px;
 }
 
 .instance-actions {
@@ -330,31 +418,179 @@ onUnmounted(() => store.stopPolling())
   flex-wrap: wrap;
 }
 
+/* status pill with a dot, instead of a generic tag */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f0efeb;
+  color: #6b7280;
+}
+
+.status-pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-pill.running {
+  background: #edf5ef;
+  color: #3f6b4d;
+}
+
+.status-pill.running .dot {
+  box-shadow: 0 0 0 3px rgba(63, 107, 77, 0.14);
+}
+
+.status-pill.error,
+.status-pill.deleting {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.status-pill.stopping,
+.status-pill.waking,
+.status-pill.starting,
+.status-pill.provisioning {
+  background: var(--bronze-soft);
+  color: var(--bronze);
+}
+
 .spec-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 18px;
+  gap: 1px;
+  margin-top: 20px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .spec-grid div {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 10px 12px;
+  gap: 5px;
+  background: var(--paper-soft);
+  padding: 13px 15px;
+}
+
+.spec-grid .muted {
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.spec-grid strong {
+  font-size: 13.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 20px 0 14px;
 }
 
 .events-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-size: 12.5px;
 }
 
-.section-head h3 {
-  margin: 0;
-  font-size: 15px;
+.events {
+  padding-left: 2px;
+  margin-top: 14px;
+}
+
+.events :deep(.el-timeline-item__timestamp) {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.events :deep(.el-timeline-item__node) {
+  background: var(--primary);
+}
+
+.events :deep(.el-timeline-item__tail) {
+  border-left-color: var(--line);
+}
+
+.blank.small {
+  margin-top: 14px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+}
+
+.blank-action {
+  margin-top: 16px;
+}
+
+.announcement-card {
+  margin-top: 18px;
+}
+
+.announcements {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.announcements li {
+  display: flex;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid #f0ebe2;
+}
+
+.announcements li:first-child {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.announce-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  margin-top: 6px;
+  background: var(--primary);
+}
+
+.announce-dot.warning {
+  background: var(--bronze);
+}
+
+.announce-dot.maintenance {
+  background: var(--danger);
+}
+
+.announcements strong {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.announcements p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.stat-card .value.date {
+  font-size: 21px;
+  margin-top: 15px;
 }
 
 @media (max-width: 900px) {

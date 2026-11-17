@@ -155,7 +155,17 @@ class RegistryClient:
         self.username = username if username is not None else settings.registry_username
         self.password = password if password is not None else settings.registry_password
         self.platform = platform or settings.dsh_image_platform
-        self._http = http or httpx.Client(timeout=20.0, follow_redirects=True)
+        # Do not inherit ambient proxy settings: on Windows a duplicated
+        # no_proxy entry (e.g. "[::1]") makes httpx raise InvalidURL at client
+        # construction, and a console-side registry probe should never be
+        # silently routed through a developer's VPN proxy. Set REGISTRY_PROXY
+        # when a proxy is genuinely required.
+        self._http = http or httpx.Client(
+            timeout=20.0,
+            follow_redirects=True,
+            trust_env=False,
+            proxy=settings.registry_proxy or None,
+        )
         self._token: str | None = None
 
     @property
@@ -173,6 +183,10 @@ class RegistryClient:
         """
         try:
             probe = self._http.get(f"{self.base}/v2/")
+        except httpx.ConnectError as exc:
+            raise RegistryError(
+                f"无法连接 {self.host}，请检查网络或设置 REGISTRY_PROXY"
+            ) from exc
         except httpx.HTTPError as exc:
             raise RegistryError(f"cannot reach {self.host}: {exc}") from exc
 

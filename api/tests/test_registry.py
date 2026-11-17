@@ -103,6 +103,24 @@ def test_split_tag_and_ordering():
     assert version_key("0.2.1") < version_key("0.3.0")
 
 
+def test_client_ignores_broken_proxy_environment(monkeypatch):
+    """A malformed NO_PROXY on Windows must not break the probe.
+
+    httpx parses the ambient proxy variables when trust_env=True; a duplicated
+    entry such as "[::1]" raises InvalidURL inside the client constructor, which
+    turned the catalogue endpoint into a 500 in real use.
+    """
+    monkeypatch.setenv("NO_PROXY", "[::1],localhost")
+    monkeypatch.setenv("no_proxy", "[::1],localhost")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1081")
+    client = RegistryClient(REPO, username="", password="")
+    assert client.host == "ghcr.io"
+    injected = RegistryClient(
+        REPO, http=httpx.Client(transport=build_transport(["0.2.1-rc.5"])), username=""
+    )
+    assert [item.tag for item in injected.candidates()] == ["0.2.1-rc.5"]
+
+
 def test_parse_timestamp_handles_nanoseconds():
     """BuildKit emits 9 fractional digits; fromisoformat only accepts 6."""
     assert parse_timestamp("2026-11-17T05:59:28.166507199Z").isoformat() == (

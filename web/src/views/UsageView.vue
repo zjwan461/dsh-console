@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Coin, Connection, Cpu, Timer } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import LineChart from '@/components/LineChart.vue'
 
@@ -82,34 +83,63 @@ onMounted(load)
 
     <div class="grid grid-4">
       <div class="card stat-card">
-        <div class="label">活跃时长</div>
-        <div class="value">{{ hours(data?.summary.active_seconds ?? 0) }} h</div>
-        <div class="hint">仅有请求/网络活动时扣减</div>
+        <div class="stat-top">
+          <span class="label">活跃时长</span>
+          <span class="chip"
+            ><el-icon><Timer /></el-icon
+          ></span>
+        </div>
+        <div class="value">{{ hours(data?.summary.active_seconds ?? 0) }}<small>h</small></div>
+        <div class="hint">仅有请求 / 网络活动时扣减</div>
       </div>
       <div class="card stat-card">
-        <div class="label">CPU 核时</div>
+        <div class="stat-top">
+          <span class="label">CPU 核时</span>
+          <span class="chip slate"
+            ><el-icon><Cpu /></el-icon
+          ></span>
+        </div>
         <div class="value">{{ hours(data?.summary.cpu_seconds ?? 0) }}</div>
         <div class="hint">30 秒采样折算</div>
       </div>
       <div class="card stat-card">
-        <div class="label">内存 GB·时</div>
+        <div class="stat-top">
+          <span class="label">内存 GB·时</span>
+          <span class="chip bronze"
+            ><el-icon><Coin /></el-icon
+          ></span>
+        </div>
         <div class="value">
           {{ ((data?.summary.mem_mb_seconds ?? 0) / 1024 / 3600).toFixed(1) }}
         </div>
         <div class="hint">按实际占用累计</div>
       </div>
       <div class="card stat-card">
-        <div class="label">网络</div>
+        <div class="stat-top">
+          <span class="label">网络</span>
+          <span class="chip"
+            ><el-icon><Connection /></el-icon
+          ></span>
+        </div>
         <div class="value">
-          {{ (((data?.summary.net_rx_bytes ?? 0) + (data?.summary.net_tx_bytes ?? 0)) / 1024 / 1024).toFixed(1) }}
-          MB
+          {{
+            (
+              ((data?.summary.net_rx_bytes ?? 0) + (data?.summary.net_tx_bytes ?? 0)) /
+              1024 /
+              1024
+            ).toFixed(1)
+          }}
+          <small>MB</small>
         </div>
         <div class="hint">出站 + 入站</div>
       </div>
     </div>
 
-    <div class="card" style="margin-top: 16px">
-      <h3 style="margin: 0 0 8px">活跃时长（小时）</h3>
+    <div class="card" style="margin-top: 18px">
+      <div class="section-head">
+        <h3>活跃时长</h3>
+        <span class="hint">单位：小时</span>
+      </div>
       <LineChart
         v-if="data && data.series.length"
         :x="labels"
@@ -117,18 +147,24 @@ onMounted(load)
           {
             name: '活跃小时',
             data: data.series.map((s) => +(s.active_seconds / 3600).toFixed(2)),
-            color: '#4d6bfe',
+            color: '#2f6f63',
             area: true,
           },
         ]"
         height="300px"
       />
-      <el-empty v-else description="暂无用量数据（运行实例后由 worker 每小时落库）" :image-size="100" />
+      <div v-else class="blank" style="margin-top: 14px">
+        <strong>暂无用量数据</strong>
+        实例运行后，worker 会每小时把采样落库
+      </div>
     </div>
 
-    <div class="grid grid-2" style="margin-top: 16px">
+    <div class="grid grid-2" style="margin-top: 18px">
       <div class="card">
-        <h3 style="margin: 0 0 8px">CPU 核时</h3>
+        <div class="section-head">
+          <h3>CPU 核时</h3>
+          <span class="hint">单位：核·小时</span>
+        </div>
         <LineChart
           v-if="data && data.series.length"
           :x="labels"
@@ -136,15 +172,21 @@ onMounted(load)
             {
               name: 'CPU 核时',
               data: data.series.map((s) => +(s.cpu_seconds / 3600).toFixed(3)),
-              color: '#10b981',
+              color: '#5b7f9e',
             },
           ]"
           height="220px"
         />
-        <el-empty v-else description="暂无数据" :image-size="60" />
+        <div v-else class="blank" style="margin-top: 14px">
+          <strong>暂无数据</strong>
+          运行实例后开始累计
+        </div>
       </div>
       <div class="card">
-        <h3 style="margin: 0 0 8px">内存 GB·时</h3>
+        <div class="section-head">
+          <h3>内存 GB·时</h3>
+          <span class="hint">按实际占用</span>
+        </div>
         <LineChart
           v-if="data && data.series.length"
           :x="labels"
@@ -152,12 +194,15 @@ onMounted(load)
             {
               name: '内存 GB·时',
               data: data.series.map((s) => +(s.mem_mb_seconds / 1024 / 3600).toFixed(3)),
-              color: '#f59e0b',
+              color: '#a9713f',
             },
           ]"
           height="220px"
         />
-        <el-empty v-else description="暂无数据" :image-size="60" />
+        <div v-else class="blank" style="margin-top: 14px">
+          <strong>暂无数据</strong>
+          运行实例后开始累计
+        </div>
       </div>
     </div>
   </div>

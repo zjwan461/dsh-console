@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Box } from '@element-plus/icons-vue'
 import { api, errorMessage, getCsrfToken } from '@/api/client'
 
 interface ImageRow {
@@ -64,9 +65,7 @@ const sizeText = (bytes: number) => (bytes ? `${(bytes / 1024 ** 3).toFixed(2)} 
 const shortDigest = (digest: string | null) =>
   digest ? digest.replace('sha256:', '').slice(0, 12) : '—'
 
-const newTags = computed(
-  () => (catalog.value?.items ?? []).filter((item) => !item.imported).length,
-)
+const newTags = computed(() => (catalog.value?.items ?? []).filter((item) => !item.imported).length)
 const latestItem = computed(
   () => (catalog.value?.items ?? []).find((item) => item.tag === catalog.value?.latest_tag) ?? null,
 )
@@ -225,6 +224,27 @@ function tag(status: string) {
   return 'warning'
 }
 
+const STATUS_TEXT: Record<string, string> = {
+  ready: '可用',
+  disabled: '已禁用',
+  failed: '失败',
+  importing: '导入中',
+}
+
+const SOURCE_TEXT: Record<string, string> = {
+  local: '本机登记',
+  pull: '仓库拉取',
+  upload: '离线导入',
+}
+
+function statusText(status: string) {
+  return STATUS_TEXT[status] ?? status
+}
+
+function sourceText(source: string) {
+  return SOURCE_TEXT[source] ?? source
+}
+
 onMounted(() => {
   load()
   loadCatalog()
@@ -252,8 +272,8 @@ onMounted(() => {
       style="margin-bottom: 16px"
     >
       <template #title>
-        发现新版本 <strong>{{ catalog?.latest_version }}</strong>
-        （当前默认 {{ catalog?.current_version ?? '未设置' }}）
+        发现新版本 <strong>{{ catalog?.latest_version }}</strong> （当前默认
+        {{ catalog?.current_version ?? '未设置' }}）
       </template>
       <el-button
         size="small"
@@ -288,10 +308,14 @@ onMounted(() => {
                 <span class="mono" style="font-size: 12px">{{ row.image_ref }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="来源" width="90" prop="source" />
+            <el-table-column label="来源" width="100">
+              <template #default="{ row }">
+                <span class="muted">{{ sourceText(row.source) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
-                <el-tag :type="tag(row.status)" size="small">{{ row.status }}</el-tag>
+                <el-tag :type="tag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="大小" width="100">
@@ -338,7 +362,12 @@ onMounted(() => {
         />
 
         <div class="table-wrap">
-          <el-table v-loading="catalogLoading" :data="catalog?.items ?? []" stripe>
+          <el-table
+            v-if="(catalog?.items ?? []).length"
+            v-loading="catalogLoading"
+            :data="catalog?.items ?? []"
+            stripe
+          >
             <el-table-column label="标签" width="170">
               <template #default="{ row }">
                 <strong>{{ row.tag }}</strong>
@@ -397,11 +426,13 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
-          <el-empty
-            v-if="!catalogLoading && !(catalog?.items ?? []).length"
-            description="仓库里还没有可识别的版本标签（latest / sha-* 不计）"
-            :image-size="70"
-          />
+          <div v-else-if="!catalogLoading" class="blank">
+            <div class="blank-icon">
+              <el-icon><Box /></el-icon>
+            </div>
+            <strong>还没有可识别的版本</strong>
+            仓库里只有 latest / sha-* 标签时不会列出；打一个版本号标签或改 DSH_VERSION 后重新检查
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -457,7 +488,12 @@ onMounted(() => {
           <el-switch v-model="tarForm.is_default" />
         </el-form-item>
       </el-form>
-      <el-progress v-if="uploading" :percentage="100" :indeterminate="true" style="margin-bottom: 10px" />
+      <el-progress
+        v-if="uploading"
+        :percentage="100"
+        :indeterminate="true"
+        style="margin-bottom: 10px"
+      />
       <p v-if="uploading" class="muted" style="font-size: 12px">
         正在上传并执行 docker load，大镜像需要几十秒。
       </p>

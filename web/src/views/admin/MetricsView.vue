@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Cpu, Monitor, Timer, UserFilled } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import LineChart from '@/components/LineChart.vue'
 
@@ -27,13 +28,17 @@ interface Overview {
 
 const loading = ref(true)
 const overview = ref<Overview | null>(null)
-const node = ref<Array<{ ts: string; cpu_percent: number; mem_used_bytes: number; mem_total_bytes: number }>>([])
+const node = ref<
+  Array<{ ts: string; cpu_percent: number; mem_used_bytes: number; mem_total_bytes: number }>
+>([])
 const top = ref<Array<{ key: string; value: number }>>([])
 
 const nodeLabels = computed(() => node.value.map((p) => p.ts.slice(5, 16).replace('T', ' ')))
 const nodeCpu = computed(() => node.value.map((p) => p.cpu_percent))
 const nodeMem = computed(() =>
-  node.value.map((p) => (p.mem_total_bytes ? +((p.mem_used_bytes / p.mem_total_bytes) * 100).toFixed(1) : 0)),
+  node.value.map((p) =>
+    p.mem_total_bytes ? +((p.mem_used_bytes / p.mem_total_bytes) * 100).toFixed(1) : 0,
+  ),
 )
 
 async function load() {
@@ -76,57 +81,93 @@ onMounted(load)
     <template v-if="overview">
       <div class="grid grid-4">
         <div class="card stat-card">
-          <div class="label">运行实例</div>
+          <div class="stat-top">
+            <span class="label">运行实例</span>
+            <span class="chip"
+              ><el-icon><Monitor /></el-icon
+            ></span>
+          </div>
           <div class="value">{{ overview.instances.running }}</div>
           <div class="hint">
             休眠 {{ overview.instances.sleeping }} · 停止 {{ overview.instances.stopped }}
           </div>
         </div>
         <div class="card stat-card">
-          <div class="label">今日活跃</div>
-          <div class="value">{{ overview.today.active_hours }} h</div>
+          <div class="stat-top">
+            <span class="label">今日活跃</span>
+            <span class="chip"
+              ><el-icon><Timer /></el-icon
+            ></span>
+          </div>
+          <div class="value">{{ overview.today.active_hours }}<small>h</small></div>
           <div class="hint">CPU {{ overview.today.cpu_hours }} 核时</div>
         </div>
         <div class="card stat-card">
-          <div class="label">内存分配</div>
+          <div class="stat-top">
+            <span class="label">内存分配</span>
+            <span class="chip slate"
+              ><el-icon><Cpu /></el-icon
+            ></span>
+          </div>
           <div class="value">
-            {{ gb(overview.capacity.mem_committed_mb) }} / {{ gb(overview.capacity.mem_total_mb) }} GB
+            {{ gb(overview.capacity.mem_committed_mb)
+            }}<small>/ {{ gb(overview.capacity.mem_total_mb) }} GB</small>
           </div>
           <div class="hint">可分配上限 {{ gb(overview.capacity.mem_limit_mb) }} GB</div>
         </div>
         <div class="card stat-card">
-          <div class="label">用户</div>
+          <div class="stat-top">
+            <span class="label">用户</span>
+            <span class="chip bronze"
+              ><el-icon><UserFilled /></el-icon
+            ></span>
+          </div>
           <div class="value">{{ overview.users.total }}</div>
           <div class="hint">7 日活跃 {{ overview.users.active_7d }}</div>
         </div>
       </div>
 
-      <div class="grid grid-2" style="margin-top: 16px">
+      <div class="grid grid-2" style="margin-top: 18px">
         <div class="card">
-          <h3 style="margin: 0 0 8px">宿主 CPU（近 1 小时）</h3>
+          <div class="section-head">
+            <h3>宿主 CPU</h3>
+            <span class="hint">近 1 小时</span>
+          </div>
           <LineChart
             v-if="node.length"
             :x="nodeLabels"
-            :series="[{ name: 'CPU %', data: nodeCpu, color: '#4d6bfe', area: true }]"
+            :series="[{ name: 'CPU %', data: nodeCpu, color: '#2f6f63', area: true }]"
             height="240px"
           />
-          <el-empty v-else description="暂无节点指标" :image-size="60" />
+          <div v-else class="blank small">
+            <strong>暂无节点指标</strong>
+            worker 采样后这里会出现趋势
+          </div>
         </div>
         <div class="card">
-          <h3 style="margin: 0 0 8px">宿主内存使用率</h3>
+          <div class="section-head">
+            <h3>宿主内存</h3>
+            <span class="hint">近 1 小时</span>
+          </div>
           <LineChart
             v-if="node.length"
             :x="nodeLabels"
-            :series="[{ name: '内存 %', data: nodeMem, color: '#f59e0b' }]"
+            :series="[{ name: '内存 %', data: nodeMem, color: '#a9713f' }]"
             height="240px"
           />
-          <el-empty v-else description="暂无节点指标" :image-size="60" />
+          <div v-else class="blank small">
+            <strong>暂无节点指标</strong>
+            worker 采样后这里会出现趋势
+          </div>
         </div>
       </div>
 
-      <div class="card" style="margin-top: 16px">
-        <h3 style="margin: 0 0 12px">用户活跃时长 Top</h3>
-        <el-table :data="top" stripe>
+      <div class="card" style="margin-top: 18px">
+        <div class="section-head">
+          <h3>用户活跃时长 Top</h3>
+          <span class="hint">按本周期活跃时长排序</span>
+        </div>
+        <el-table :data="top" stripe style="margin-top: 8px">
           <el-table-column prop="key" label="用户" />
           <el-table-column label="活跃时长" width="180">
             <template #default="{ row }">{{ (row.value / 3600).toFixed(1) }} h</template>
@@ -134,9 +175,7 @@ onMounted(load)
           <el-table-column label="占比" min-width="220">
             <template #default="{ row }">
               <el-progress
-                :percentage="
-                  top[0]?.value ? Math.round((row.value / top[0].value) * 100) : 0
-                "
+                :percentage="top[0]?.value ? Math.round((row.value / top[0].value) * 100) : 0"
                 :show-text="false"
               />
             </template>

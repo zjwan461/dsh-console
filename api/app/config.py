@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Credentials for a private package; empty means anonymous (public packages).
     registry_username: str = ""
     registry_password: str = ""
+    # Explicit proxy for registry access. Empty means direct: the probe ignores
+    # the ambient HTTP_PROXY/NO_PROXY of the host it runs on.
+    registry_proxy: str = ""
     registry_check_enabled: bool = True
     registry_check_interval_hours: int = 6
     # Upload limit for `docker save` tarballs (they are gigabytes).

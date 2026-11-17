@@ -98,8 +98,8 @@ def catalog(
     if fresh and not refresh and state.get("repository") == repo_ref:
         return _decorate(db, state)
 
-    client = _client(db)
     try:
+        client = _client(db)
         candidates = client.candidates(limit=limit)
     except RegistryError as exc:
         # Keep serving the last good snapshot: a registry outage must not blank
@@ -116,6 +116,12 @@ def catalog(
             }
         )
         stale["error"] = str(exc)
+        stale["stale"] = True
+        return stale
+    except Exception as exc:  # noqa: BLE001 - a probe must never 500 the page
+        log.exception("registry probe failed unexpectedly")
+        stale = _decorate(db, state) if state else {"repository": repo_ref, "items": []}
+        stale["error"] = f"{type(exc).__name__}: {exc}"[:300]
         stale["stale"] = True
         return stale
 

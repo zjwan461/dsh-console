@@ -74,6 +74,34 @@ async function setStatus(value: string) {
   }
 }
 
+const STATUS_TEXT: Record<string, string> = {
+  open: '待处理',
+  processing: '处理中',
+  resolved: '已解决',
+  closed: '已关闭',
+}
+
+const PRIORITY_TEXT: Record<string, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高',
+}
+
+function statusText(status: string) {
+  return STATUS_TEXT[status] ?? status
+}
+
+function priorityText(priority: string) {
+  return PRIORITY_TEXT[priority] ?? priority
+}
+
+function statusTag(status: string): 'success' | 'warning' | 'info' | 'danger' {
+  if (status === 'open') return 'warning'
+  if (status === 'processing') return 'info'
+  if (status === 'resolved') return 'success'
+  return 'info'
+}
+
 onMounted(load)
 </script>
 
@@ -84,7 +112,13 @@ onMounted(load)
         <h1>工单队列</h1>
         <p>回复、指派与关闭</p>
       </div>
-      <el-select v-model="status" placeholder="全部状态" clearable style="width: 150px" @change="load">
+      <el-select
+        v-model="status"
+        placeholder="全部状态"
+        clearable
+        style="width: 150px"
+        @change="load"
+      >
         <el-option label="待处理" value="open" />
         <el-option label="处理中" value="processing" />
         <el-option label="已解决" value="resolved" />
@@ -99,11 +133,19 @@ onMounted(load)
         </el-table-column>
         <el-table-column prop="subject" label="主题" min-width="240" />
         <el-table-column label="状态" width="110">
-          <template #default="{ row }"><el-tag>{{ row.status }}</el-tag></template>
+          <template #default="{ row }">
+            <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+          </template>
         </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="100" />
+        <el-table-column label="优先级" width="100">
+          <template #default="{ row }">
+            <span :class="['priority', row.priority]">{{ priorityText(row.priority) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ row.created_at.replace('T', ' ').slice(0, 16) }}</template>
+          <template #default="{ row }">{{
+            row.created_at.replace('T', ' ').slice(0, 16)
+          }}</template>
         </el-table-column>
       </el-table>
     </div>
@@ -142,6 +184,20 @@ onMounted(load)
   display: flex;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+.priority {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.priority.high {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.priority.low {
+  color: #9aa2aa;
 }
 
 .messages {
