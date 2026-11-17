@@ -99,6 +99,16 @@ def test_instance_lifecycle(client: TestClient):
     assert stopped.status_code == 202
     assert client.get("/api/v1/instances/me").json()["data"]["status"] == "stopped"
 
+    with SessionLocal() as db:
+        stopped_config = build_config(db)
+    stopped_route = next(
+        r
+        for r in stopped_config["apps"]["http"]["servers"]["srv0"]["routes"]
+        if r["match"][0]["host"] == ["bob.dsh.example.com"]
+    )
+    assert stopped_route["handle"][0]["handler"] == "subroute"
+    assert stopped_route["handle"][0]["routes"][0]["match"][0]["path"] == ["/w/*"]
+
     started = client.post("/api/v1/instances/me/start", headers=_headers(bob_csrf))
     assert started.status_code == 202
     assert client.get("/api/v1/instances/me").json()["data"]["status"] == "running"

@@ -65,13 +65,31 @@ def _instance_route(instance: Instance, base_domain: str) -> dict:
     else:
         # Anything not running lands on the wake page. The page itself never
         # hands out the DSH token; it only starts the container and redirects.
+        # /w/* must bypass the rewrite, otherwise the page's own status polling
+        # would be rewritten back to the HTML page.
+        api_proxy = {
+            "handler": "reverse_proxy",
+            "upstreams": [{"dial": "console-api:8000"}],
+            "flush_interval": -1,
+        }
         handle = [
-            {"handler": "rewrite", "uri": f"/w/{instance.wake_key}"},
             {
-                "handler": "reverse_proxy",
-                "upstreams": [{"dial": "console-api:8000"}],
-                "flush_interval": -1,
-            },
+                "handler": "subroute",
+                "routes": [
+                    {
+                        "match": [{"path": ["/w/*"]}],
+                        "handle": [api_proxy],
+                        "terminal": True,
+                    },
+                    {
+                        "handle": [
+                            {"handler": "rewrite", "uri": f"/w/{instance.wake_key}"},
+                            api_proxy,
+                        ],
+                        "terminal": True,
+                    },
+                ],
+            }
         ]
     return {
         "match": [{"host": [host]}],
