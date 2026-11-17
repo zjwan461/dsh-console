@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, Literal
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .security import validate_username
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=200)
+    remember: bool = False
+
+
+class RegisterIn(BaseModel):
+    code: str = Field(min_length=4, max_length=64)
+    username: str = Field(min_length=3, max_length=31)
+    password: str = Field(min_length=8, max_length=200)
+    email: EmailStr | None = None
+    display_name: str = Field(default="", max_length=64)
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        error = validate_username(value)
+        if error:
+            raise ValueError(error)
+        return value
+
+
+class PasswordChangeIn(BaseModel):
+    old_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+class ProfileIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=64)
+    email: EmailStr | None = None
+
+
+class CredentialIn(BaseModel):
+    api_key: str = Field(default="", max_length=512)
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(min_length=3, max_length=31)
+    password: str = Field(min_length=8, max_length=200)
+    display_name: str = Field(default="", max_length=64)
+    email: EmailStr | None = None
+    role: Literal["user", "admin"] = "user"
+    plan_id: int | None = None
+    must_change_password: bool = True
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, value: str) -> str:
+        error = validate_username(value)
+        if error:
+            raise ValueError(error)
+        return value
+
+
+class UserPatchIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=64)
+    email: EmailStr | None = None
+    role: Literal["user", "admin"] | None = None
+    status: Literal["active", "disabled", "pending"] | None = None
+    plan_id: int | None = None
+    reason: str | None = Field(default=None, max_length=255)
+
+
+class ResetPasswordIn(BaseModel):
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+class PlanIn(BaseModel):
+    code: str = Field(min_length=2, max_length=32, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=255)
+    cpu_cores: Decimal = Field(default=Decimal("1.00"), gt=0, le=64)
+    memory_mb: int = Field(default=2048, ge=512, le=1048576)
+    disk_gb: int = Field(default=20, ge=1, le=100000)
+    monthly_minutes: int = Field(default=3600, ge=0, le=5256000)
+    max_snapshots: int = Field(default=2, ge=0, le=1000)
+    max_user_images: int = Field(default=2, ge=0, le=1000)
+    gpu_count: int = Field(default=0, ge=0, le=16)
+    is_default: bool = False
+    enabled: bool = True
+    sort_order: int = 0
+
+
+class PlanPatchIn(BaseModel):
+    name: str | None = Field(default=None, max_length=64)
+    description: str | None = Field(default=None, max_length=255)
+    cpu_cores: Decimal | None = Field(default=None, gt=0, le=64)
+    memory_mb: int | None = Field(default=None, ge=512, le=1048576)
+    disk_gb: int | None = Field(default=None, ge=1, le=100000)
+    monthly_minutes: int | None = Field(default=None, ge=0, le=5256000)
+    max_snapshots: int | None = Field(default=None, ge=0, le=1000)
+    max_user_images: int | None = Field(default=None, ge=0, le=1000)
+    gpu_count: int | None = Field(default=None, ge=0, le=16)
+    is_default: bool | None = None
+    enabled: bool | None = None
+    sort_order: int | None = None
+
+
+class InviteIn(BaseModel):
+    role: Literal["user", "admin"] = "user"
+    max_uses: int = Field(default=1, ge=1, le=1000)
+    expires_in_days: int = Field(default=7, ge=1, le=365)
+    note: str = Field(default="", max_length=255)
+
+
+class QuotaPatchIn(BaseModel):
+    cpu_cores_override: Decimal | None = Field(default=None, gt=0, le=64)
+    memory_mb_override: int | None = Field(default=None, ge=512, le=1048576)
+    disk_gb_override: int | None = Field(default=None, ge=1, le=100000)
+    monthly_minutes_override: int | None = Field(default=None, ge=0, le=5256000)
+
+
+class GrantIn(BaseModel):
+    minutes: int = Field(ge=-5256000, le=5256000)
+    reason: str = Field(min_length=1, max_length=255)
+
+
+class SettingsIn(BaseModel):
+    base_domain: str | None = Field(default=None, max_length=190)
+    console_name: str | None = Field(default=None, max_length=64)
+    default_plan_id: int | None = None
+    default_idle_minutes: int | None = Field(default=None, ge=0, le=1440)
+    allow_user_version_switch: bool | None = None
+    allow_user_self_key: bool | None = None
+    snapshot_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    deleted_user_retention_days: int | None = Field(default=None, ge=1, le=3650)
+    upload_max_mb: int | None = Field(default=None, ge=1, le=10240)
+    admin_terminal_enabled: bool | None = None
+    maintenance_mode: bool | None = None
+    maintenance_message: str | None = Field(default=None, max_length=500)
+
+
+def iso(value: datetime | None) -> str | None:
+    return value.isoformat() + "Z" if value else None
+
+
+def user_brief(user: Any) -> dict[str, Any]:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+        "role": user.role.value,
+        "status": user.status.value,
+        "subdomain": user.subdomain,
+        "must_change_password": user.must_change_password,
+        "created_at": iso(user.created_at),
+        "last_login_at": iso(user.last_login_at),
+    }

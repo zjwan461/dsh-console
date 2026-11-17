@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+web/dist/
+web/.tmp/
+api/.venv/
+**/__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# local runtime
+*.db
+*.sqlite3
+.env
+.env.local
+data/
+snapshots/
+backups/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.log

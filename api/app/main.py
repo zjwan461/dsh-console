@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import logging
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+
+from .config import settings
+from .db import Base, SessionLocal, engine
+from .errors import ApiError, api_error_handler, error_body, unhandled_error_handler
+from .models import User  # noqa: F401  (registers metadata)
+from .redis import redis_ok
+from .routers import (
+    admin_audit,
+    admin_invites,
+    admin_plans,
+    admin_quotas,
+    admin_settings,
+    admin_users,
+    auth,
+    me,
+    system,
+)
+from .security import new_request_id
+from .seed import seed_all
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log = logging.getLogger("dsh.api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.is_dev or settings.env == "sqlite":
+        Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        try:
+            seed_all(db)
+        except SQLAlchemyError:
+            log.exception("seed failed (database not ready?)")
+            raise
+    log.info("api ready env=%s prefix=%s", settings.env, settings.api_prefix)
+    yield
+
+
+app = FastAPI(
+    title="DSH Console API",
+    version="0.1.0",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
+
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+@app.middleware("http")
+async def observability(request: Request, call_next):
+    request.state.request_id = new_request_id()
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-Id"] = request.state.request_id
+    response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.1f}"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(Exception, unhandled_error_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, exc: RequestValidationError):
+    fields = []
+    for item in exc.errors():
+        loc = ".".join(str(part) for part in item.get("loc", []) if part != "body")
+        fields.append({"field": loc, "message": item.get("msg", "invalid")})
+    return JSONResponse(
+        status_code=422,
+        content=error_body(request, "VALIDATION_ERROR", "参数校验失败", {"fields": fields}),
+    )
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz():
+    checks = {"redis": redis_ok()}
+    try:
+        with SessionLocal() as db:
+            db.execute(__import__("sqlalchemy").text("SELECT 1"))
+        checks["mysql"] = True
+    except Exception:
+        checks["mysql"] = False
+    return JSONResponse(
+        status_code=200 if all(checks.values()) else 503,
+        content={"status": "ok" if all(checks.values()) else "degraded", "checks": checks},
+    )
+
+
+for router in (
+    auth.router,
+    me.router,
+    admin_users.router,
+    admin_plans.router,
+    admin_invites.router,
+    admin_quotas.router,
+    admin_settings.router,
+    admin_audit.router,
+    system.router,
+):
+    app.include_router(router, prefix=settings.api_prefix)

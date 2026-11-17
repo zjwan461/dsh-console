@@ -1,0 +1,98 @@
+name: dsh-console
+
+x-api-env: &api-env
+  ENV: ${ENV:-prod}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: mysql+pymysql://${MYSQL_USER:-dsh}:${MYSQL_PASSWORD:?set MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-dsh_console}?charset=utf8mb4
+  REDIS_URL: redis://redis:6379/0
+  REDIS_FAKE: "0"
+  SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  MASTER_KEY: ${MASTER_KEY:-}
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  CONSOLE_BASE_DOMAIN: ${CONSOLE_BASE_DOMAIN:-dsh.example.com}
+  CONSOLE_NAME: ${CONSOLE_NAME:-优墨云舱}
+  BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+  MEMORY_RESERVE_MB: ${MEMORY_RESERVE_MB:-4096}
+  MEMORY_RESERVE_PERCENT: ${MEMORY_RESERVE_PERCENT:-10}
+  CPU_OVERCOMMIT: ${CPU_OVERCOMMIT:-4.0}
+  DISK_USE_RATIO: ${DISK_USE_RATIO:-0.90}
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dsh_console}
+      MYSQL_USER: ${MYSQL_USER:-dsh}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [console]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [console]
+
+  console-api:
+    build:
+      context: ./api
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [console]
+
+  console-web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    restart: unless-stopped
+    environment:
+      CONSOLE_DOMAIN: ${CONSOLE_DOMAIN:-console.dsh.example.com}
+    depends_on:
+      console-api:
+        condition: service_healthy
+    ports:
+      - "${CONSOLE_HTTPS_PORT:-443}:443"
+    volumes:
+      - caddy-data:/data
+    networks: [console]
+
+networks:
+  console:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  caddy-data:
