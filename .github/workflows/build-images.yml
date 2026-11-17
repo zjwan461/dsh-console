@@ -1,0 +1,143 @@
+name: build-images
+
+# Builds the two runtime images and (on main / tags) pushes them to GHCR:
+#   ghcr.io/<owner>/<repo>-api
+#   ghcr.io/<owner>/<repo>-web
+#
+# Nothing host-specific is baked in: the images read all configuration at runtime
+# (see .env.example). Pull requests build without pushing.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "api/**"
+      - "web/**"
+      - "deploy/**"
+      - ".github/workflows/build-images.yml"
+  pull_request:
+    paths:
+      - "api/**"
+      - "web/**"
+      - "deploy/**"
+      - ".github/workflows/build-images.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  verify:
+    name: lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/pyproject.toml
+
+      # The test suite runs entirely on SQLite + fakeredis + FakeDriver, so no
+      # services are needed here.
+      - name: Install API dependencies
+        working-directory: api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        working-directory: api
+        run: ruff check app tests alembic
+
+      - name: Test
+        working-directory: api
+        run: pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Frontend install
+        working-directory: web
+        run: npm ci
+
+      - name: Frontend typecheck
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Frontend build
+        working-directory: web
+        run: npm run build
+
+  build:
+    name: build ${{ matrix.image.name }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: api
+            context: ./api
+            file: ./api/Dockerfile
+          - name: web
+            context: .
+            file: ./deploy/Dockerfile.web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Docker requires a lowercase repository path; GitHub owners can have
+          # uppercase letters, so normalise it here.
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.image.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=dsh-console ${{ matrix.image.name }}
+            org.opencontainers.image.description=YouMo Cloud Cabin — DSH cloud console
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          # Pull requests only build, so a fork cannot publish to the registry.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
+          build-args: |
+            PIP_INDEX_URL=${{ vars.PIP_INDEX_URL || 'https://pypi.org/simple' }}

@@ -155,6 +155,25 @@ docker push ghcr.io/you/dsh:0.2.1-rc.5
 
 控制台导入后 `docker pull` 到本地；`docker save` 的 tar 只用于离线环境。
 
+## 4.1 用 GitHub Actions 构建控制台镜像
+
+仓库自带 `.github/workflows/build-images.yml`，推 `main` 或打 `v*` tag 时自动构建并推 GHCR：
+
+| 镜像 | 构建上下文 | 产物 |
+|---|---|---|
+| `dsh-console-api` | `api/`（`api/Dockerfile`） | `ghcr.io/<owner>/dsh-console-api:<tag>` |
+| `dsh-console-web` | 仓库根（`deploy/Dockerfile.web`） | `ghcr.io/<owner>/dsh-console-web:<tag>` |
+
+标签规则：分支名、`sha-<commit>`、`v1.2.3` → `1.2.3` / `1.2`、默认分支额外打 `latest`。PR 只构建不推送，缓存用 GitHub Actions cache。
+
+- `verify` 任务先跑 `ruff` + `pytest`（SQLite/fakeredis/FakeDriver，无需服务）+ 前端 `typecheck`/`build`，失败则不构建镜像。
+- 私有 PyPI 镜像或内网 Nexus：设置仓库变量 `PIP_INDEX_URL`，它会作为 `--build-arg` 传给 `api` 镜像。
+- 拉取私有镜像：`echo "$GITHUB_TOKEN" | docker login ghcr.io -u <user> --password-stdin`。
+
+`security.yml` 另跑三项守护：`scripts/check_no_secrets.py`（扫描凭据、带密码的 DSN、公网 IP，工作区与全部历史各扫一遍）、Python `pip-audit`、`npm audit`（后两者仅告警不阻塞）。
+
+> 本地也可以随时执行同样的检查：`python scripts/check_no_secrets.py --history`。
+
 ## 5. 证书（两种模式，按 `CONSOLE_TLS_MODE` 切换）
 
 ### 5.1 `internal_ca`（默认，内网/离线/开源演示）

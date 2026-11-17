@@ -28,6 +28,14 @@ docker compose logs -f console-api
 
 打开 `https://console.dsh.example.com`（先把该域名解析到本机；Caddy 用内部 CA，需要信任根证书，见 [05 文档](docs/05-deployment-ops.md)）。
 
+也可以直接用 CI 构建好的镜像，跳过本地构建：
+
+```bash
+# GHCR 上由 .github/workflows/build-images.yml 产出
+docker pull ghcr.io/zjwan461/dsh-console-api:latest
+docker pull ghcr.io/zjwan461/dsh-console-web:latest
+```
+
 先以管理员登录 → **版本** → 登记一个已经 `docker pull` 到本机的镜像（例如 `ghcr.io/you/dsh:0.2.1-rc.5`），再让用户创建实例。
 
 > M2 起 `console-api` 挂载 `/var/run/docker.sock` 与 `./data`，并加入 `dsh-edge` 网络。这是 root 等价权限，务必只让 Caddy 访问 API，不要把 8000 端口发布出去。
