@@ -127,7 +127,9 @@ onUnmounted(() => store.stopPolling())
         <p>欢迎回来，{{ overview?.user.display_name || overview?.user.username }}</p>
       </div>
       <div class="actions">
-        <el-button v-if="!instance" type="primary" @click="openCreate">创建我的云电脑</el-button>
+        <el-button v-if="!instance" type="primary" @click="openCreate">
+          创建我的 DSH 云电脑
+        </el-button>
         <el-button
           v-else-if="store.isRunning"
           type="primary"
@@ -296,7 +298,7 @@ onUnmounted(() => store.stopPolling())
           <strong>还没有云舱</strong>
           创建后你会得到独立子域名、数据目录与时长配额
           <div class="blank-action">
-            <el-button type="primary" @click="openCreate">创建我的云电脑</el-button>
+            <el-button type="primary" @click="openCreate">创建我的 DSH 云电脑</el-button>
           </div>
         </div>
       </div>
@@ -322,7 +324,7 @@ onUnmounted(() => store.stopPolling())
       </div>
     </template>
 
-    <el-dialog v-model="createVisible" title="创建我的云电脑" width="520px">
+    <el-dialog v-model="createVisible" title="创建我的 DSH 云电脑" width="520px">
       <el-form label-width="100px">
         <el-form-item label="当前套餐">
           <el-tag>{{ overview?.quota.plan ?? '未分配' }}</el-tag>
