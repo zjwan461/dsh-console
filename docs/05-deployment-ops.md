@@ -129,7 +129,34 @@ docker compose logs -f console-api     # 等 alembic upgrade head 完成、/read
 3. 若 `users` 为空，用 `BOOTSTRAP_ADMIN_*` 建管理员；
 4. 创建 `dsh-edge` 网络，并向 Caddy 下发全量配置（console + 已有实例路由）。
 
-### 3.3 忘了管理员密码怎么办
+### 3.3 上线前自检：`app.cli doctor`
+
+把踩过的坑做成了一次性检查（数据库、Redis、Docker、网络、默认镜像、数据目录、密钥强度、Caddy）：
+
+```bash
+cd api
+python -m app.cli doctor
+```
+
+```
+[PASS] 环境              ENV=prod  COOKIE_SECURE=True  BASE_DOMAIN=console.example.com
+[PASS] SESSION_SECRET    长度 43
+[PASS] DATA_ROOT 可写    /srv/dsh-console/data
+[WARN] HOST_DATA_ROOT  与 DATA_ROOT 相同（/srv/dsh-console/data）：只有项目确实位于该路径时才正确
+[PASS] 数据库            12 个用户
+[PASS] 迁移版本          e3f1c2a9b7d4
+[PASS] Redis            PING 正常
+[PASS] Docker           29.6.2 · 2C · 7 GB · 21 个容器运行中
+[PASS] 实例网络          dsh-edge
+[PASS] 默认镜像          ghcr.io/zjwan461/dsh-docker:0.2.1-rc.5
+[PASS] Caddy            admin API 正常（200）
+```
+
+- `FAIL` 会让退出码为 1，可直接放进部署脚本做门禁；`WARN` 不影响退出码。
+- 检查项都是只读的，不会创建网络、不会拉镜像。
+- 生产环境（`ENV=prod`）下弱 `SESSION_SECRET` / 空 `MASTER_KEY` 会判 `FAIL`；`ENV=dev` 只告警。
+
+### 3.4 忘了管理员密码怎么办
 
 `BOOTSTRAP_ADMIN_*` **只在 `users` 表为空时生效**，之后改环境变量不会重置任何账号。
 三种找回方式，按推荐顺序：

@@ -125,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--display-name", default="")
 
     sub.add_parser("show-config", help="print the effective database/domain settings")
+    sub.add_parser("doctor", help="preflight checks for a real deployment")
 
     args = parser.parse_args(argv)
 
@@ -133,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"BASE_DOMAIN  = {settings.base_domain}")
         print(f"ENV          = {settings.env}")
         return 0
+
+    if args.command == "doctor":
+        from .doctor import print_doctor, run_doctor
+
+        return print_doctor(run_doctor())
 
     with SessionLocal() as db:
         if args.command == "list-users":

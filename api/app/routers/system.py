@@ -9,15 +9,23 @@ from ..db import get_db
 from ..deps import csrf_guard, current_user, require_admin
 from ..drivers import get_driver
 from ..errors import envelope
-from ..models import User
+from ..models import Role, User
 from ..redis import redis_ok
 from ..security import utcnow
+from ..services.settings import get_setting
 
 router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(csrf_guard)])
 
 
 @router.get("/info")
-def info(request: Request, user: User = Depends(current_user)):
+def info(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    terminal_enabled = False
+    if user.role == Role.admin:
+        terminal_enabled = bool(get_setting(db, "admin_terminal_enabled", True))
     return envelope(
         request,
         {
@@ -27,6 +35,8 @@ def info(request: Request, user: User = Depends(current_user)):
             "version": "0.1.0",
             "env": settings.env,
             "server_time": utcnow().isoformat() + "Z",
+            # Lets the admin UI grey out entry points the server would reject.
+            "features": {"terminal": terminal_enabled},
         },
     )
 

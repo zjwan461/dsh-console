@@ -51,6 +51,7 @@ cd api
 python -m app.cli list-users                                   # 有哪些账号
 python -m app.cli reset-password admin --password 'NewPassw0rd!'  # 重置
 python -m app.cli create-admin ops --password 'NewPassw0rd!'      # 再加一个管理员
+python -m app.cli doctor                                          # 上线前自检
 ```
 
 CLI 直接读写数据库、不经过 API，所以 API 挂了也能用；重置会同时吊销该账号的所有会话。详见 [05 文档 §3.3](docs/05-deployment-ops.md)。

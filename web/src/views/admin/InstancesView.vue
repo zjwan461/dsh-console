@@ -103,7 +103,17 @@ function statusText(status: string) {
   return STATUS_TEXT[status] ?? status
 }
 
-onMounted(load)
+const terminalEnabled = ref(true)
+
+onMounted(async () => {
+  await load()
+  try {
+    const info = await api.get<{ features?: { terminal?: boolean } }>('/system/info')
+    terminalEnabled.value = info.features?.terminal ?? true
+  } catch {
+    // keep the button enabled; the server still refuses when disabled
+  }
+})
 </script>
 
 <template>
@@ -152,7 +162,22 @@ onMounted(load)
               <el-button link type="primary" @click="action(row, 'stop')">停止</el-button>
               <el-button link type="primary" @click="action(row, 'restart')">重启</el-button>
               <el-button link type="primary" @click="showLogs(row)">日志</el-button>
-              <el-button link type="primary" @click="openTerminal(row)">终端</el-button>
+              <el-tooltip
+                :disabled="terminalEnabled"
+                content="管理员已在「系统设置」中关闭 Web 终端"
+                placement="top"
+              >
+                <span>
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="!terminalEnabled"
+                    @click="openTerminal(row)"
+                  >
+                    终端
+                  </el-button>
+                </span>
+              </el-tooltip>
               <el-button link type="danger" @click="remove(row)">删除</el-button>
             </div>
           </template>

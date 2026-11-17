@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     caddy_log_listen: str = "0.0.0.0"
     caddy_log_port: int = 9001
     jobs_inline: bool = False
+    # Close an idle admin terminal after this many seconds (input resets it).
+    terminal_idle_seconds: int = 900
 
     # ── metering / worker (M3) ───────────────────────────────────────────
     metering_enabled: bool = True

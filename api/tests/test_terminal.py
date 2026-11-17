@@ -111,6 +111,65 @@ def test_terminal_rejects_non_admin(client: TestClient, terminal_instance: int):
             ws.receive_text()
 
 
+def test_terminal_is_governed_by_setting_and_audited(client: TestClient, terminal_instance: int):
+    """The `admin_terminal_enabled` setting must actually gate the route, and both
+    opening and closing a session must leave an audit trail."""
+    from app.models import AuditLog
+    from app.services.settings import put_setting
+
+    cookie = _login_cookie(client, "admin", "admin12345")
+    url = f"/api/v1/admin/instances/{terminal_instance}/terminal"
+
+    # Enabled: open, use, close -> two audit rows.
+    with client.websocket_connect(url, headers=cookie) as ws:
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        ws.receive_bytes()
+        ws.send_bytes(b"whoami\r")
+        ws.receive_bytes()
+    with SessionLocal() as db:
+        actions = [
+            row.action
+            for row in db.query(AuditLog).filter(AuditLog.action.like("admin.terminal%")).all()
+        ]
+    assert "admin.terminal_open" in actions
+    assert "admin.terminal_close" in actions
+
+    # Disabled: the server refuses with an error frame instead of opening a PTY.
+    with SessionLocal() as db:
+        put_setting(db, "admin_terminal_enabled", False, None)
+        db.commit()
+    try:
+        with client.websocket_connect(url, headers=cookie) as ws:
+            error = json.loads(ws.receive_text())
+            assert error["type"] == "error"
+            assert "关闭" in error["message"]
+        with SessionLocal() as db:
+            denied = db.query(AuditLog).filter(AuditLog.action == "admin.terminal_denied").count()
+        assert denied >= 1
+    finally:
+        with SessionLocal() as db:
+            put_setting(db, "admin_terminal_enabled", True, None)
+            db.commit()
+
+
+def test_terminal_idle_timeout(client: TestClient, terminal_instance: int, monkeypatch):
+    """An idle session is closed with an explanatory frame, not left hanging."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "terminal_idle_seconds", 1)
+    cookie = _login_cookie(client, "admin", "admin12345")
+    url = f"/api/v1/admin/instances/{terminal_instance}/terminal"
+    with client.websocket_connect(url, headers=cookie) as ws:
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        ws.receive_bytes()  # banner
+        import time
+
+        time.sleep(1.3)
+        message = json.loads(ws.receive_text())
+        assert message["type"] == "error"
+        assert "空闲" in message["message"]
+
+
 def test_resize_exec_maps_rows_to_height():
     """docker-py names the arguments height/width; passing h/w raises TypeError.
 

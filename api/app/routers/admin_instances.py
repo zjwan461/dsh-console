@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 
 from fastapi import (
     APIRouter,
@@ -30,6 +31,7 @@ from ..services.instances import (
     start_instance,
     stop_instance,
 )
+from ..services.settings import get_setting
 
 router = APIRouter(
     prefix="/admin/instances", tags=["admin:instances"], dependencies=[Depends(csrf_guard)]
@@ -40,15 +42,25 @@ router = APIRouter(
 ws_router = APIRouter(prefix="/admin/instances", tags=["admin:instances"])
 
 
-async def _safe_receive(ws: WebSocket) -> dict | None:
+class _IdleTimeout(Exception):
+    """No input for longer than TERMINAL_IDLE_SECONDS."""
+
+
+async def _safe_receive(ws: WebSocket, timeout: float | None = None) -> dict | None:
     """Receive one message, returning None once the peer is gone.
 
     Starlette raises WebSocketDisconnect on the first post-close receive and a
     bare RuntimeError ("Cannot call receive once a disconnect message has been
-    received") on any later one, so both must be handled.
+    received") on any later one, so both must be handled. With `timeout`, an
+    idle session raises `_IdleTimeout` so the caller can close it politely.
     """
     try:
-        message = await ws.receive()
+        if timeout:
+            message = await asyncio.wait_for(ws.receive(), timeout)
+        else:
+            message = await ws.receive()
+    except TimeoutError:
+        raise _IdleTimeout from None
     except WebSocketDisconnect:
         return None
     except RuntimeError:
@@ -228,10 +240,35 @@ async def terminal(ws: WebSocket, instance_id: int):
         await ws.close(code=1008)
         return
     await ws.accept()
+    client_host = ws.client.host if ws.client else None
+    client_ua = ws.headers.get("user-agent")
+
+    def audit(action: str, detail: dict) -> None:
+        """WebSocket handlers have no Request, so record the peer explicitly."""
+        with SessionLocal() as db:
+            actor = db.get(User, user_id)
+            write_audit(
+                db,
+                None,
+                actor,
+                action,
+                "instance",
+                instance_id,
+                detail,
+                ip_override=client_host,
+                ua_override=client_ua,
+            )
+            db.commit()
 
     with SessionLocal() as db:
         instance = db.get(Instance, instance_id)
         container_id = instance.container_id if instance else None
+        terminal_enabled = bool(get_setting(db, "admin_terminal_enabled", True))
+    if not terminal_enabled:
+        audit("admin.terminal_denied", {"reason": "disabled by setting"})
+        await ws.send_text(json.dumps({"type": "error", "message": "管理员已关闭 Web 终端"}))
+        await ws.close(code=1008)
+        return
     if not container_id:
         await ws.send_text(json.dumps({"type": "error", "message": "实例没有运行中的容器"}))
         await ws.close()
@@ -245,22 +282,44 @@ async def terminal(ws: WebSocket, instance_id: int):
         await ws.close()
         return
 
+    started = time.monotonic()
+    bytes_in = 0
+    bytes_out = 0
+    close_reason = "client_closed"
+    audit("admin.terminal_open", {"container": container_id[:12], "exec": exec_id[:12]})
     await ws.send_text(json.dumps({"type": "ready", "shell": "bash"}))
 
     async def pump_output() -> None:
+        nonlocal bytes_out
         while True:
             data = await asyncio.to_thread(raw.recv, 65536)
             if not data:
                 break
+            bytes_out += len(data)
             await ws.send_bytes(data)
 
     async def pump_input() -> None:
+        nonlocal bytes_in, close_reason
+        idle = settings.terminal_idle_seconds or None
         while True:
-            message = await _safe_receive(ws)
+            try:
+                message = await _safe_receive(ws, timeout=idle)
+            except _IdleTimeout:
+                close_reason = "idle_timeout"
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": f"空闲超过 {idle // 60} 分钟，已自动断开",
+                        }
+                    )
+                )
+                return
             if message is None:
                 return
             payload = message.get("bytes")
             if payload is not None:
+                bytes_in += len(payload)
                 await asyncio.to_thread(raw.sendall, payload)
                 continue
             text = message.get("text")
@@ -279,6 +338,7 @@ async def terminal(ws: WebSocket, instance_id: int):
                     await ws.send_text(json.dumps({"type": "pong"}))
                 continue
             # Not JSON: treat it as typed input (older clients / manual testing).
+            bytes_in += len(text.encode())
             await asyncio.to_thread(raw.sendall, text.encode())
 
     output_task = asyncio.create_task(pump_output())
@@ -296,6 +356,16 @@ async def terminal(ws: WebSocket, instance_id: int):
             await ws.close()
         except Exception:  # noqa: BLE001
             pass
+        audit(
+            "admin.terminal_close",
+            {
+                "container": container_id[:12],
+                "reason": close_reason,
+                "seconds": round(time.monotonic() - started, 1),
+                "bytes_in": bytes_in,
+                "bytes_out": bytes_out,
+            },
+        )
 
 
 def _parse_control(text: str) -> dict | None:

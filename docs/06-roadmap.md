@@ -215,10 +215,22 @@ docker pull 到入库 144s，页面状态变为「已导入」
 
 单元测试 12 条（`tests/test_registry.py`），全部用 `httpx.MockTransport`，不碰网络。
 
-## 6. 下一步
+## 6. M6 加固（进行中）
+
+真机回归之后做的一轮生产化补齐，都是离线可验证的：
+
+- [x] **管理员终端治理**：`admin_terminal_enabled` 真正生效（此前只是个设置项）；每次开/关都写审计（操作者、实例、IP、UA、时长、字节数、关闭原因）；`TERMINAL_IDLE_SECONDS` 空闲自动断开；前端按 `/system/info.features.terminal` 置灰入口。
+- [x] **上线前自检 `app.cli doctor`**：数据库/迁移版本/Redis/Docker/实例网络/默认镜像/数据目录/密钥强度/Caddy 一次跑完，`FAIL` 退出码 1，可直接做部署门禁。
+- [x] **容量探测降级**：Docker 不可用时监控页不再 500，返回 `docker_ok=false` 并拒绝新建实例（503 `DOCKER_UNAVAILABLE`）。
+- [ ] 备份/恢复演练（mysqldump + data + Caddy 证书）
+- [ ] 故障演练：杀 Caddy / worker / MySQL、磁盘写满、单实例 OOM
+- [ ] 压测与 inotify 上限
+- [ ] 指标导出（Prometheus `/metrics`：实例状态、配额余量、worker 落库延迟）
+
+## 7. 下一步
 
 M1–M5 已交付并完成真机回归。剩余工作：
 
 1. 生产化收尾：HTTPS + 域名（`internal_ca`）、`COOKIE_SECURE=true`、备份演练；
-2. M6 加固：故障演练（杀 Caddy / worker / MySQL、磁盘写满、单实例 OOM）、压测、inotify 上限；
+2. 故障演练（杀 Caddy / worker / MySQL、磁盘写满、单实例 OOM）、压测、inotify 上限；
 3. 二期：GPU、`llm-gateway`（Key 隔离）、多节点/K8s。
