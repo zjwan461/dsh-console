@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import time
 from datetime import UTC, datetime
+from queue import Empty, Queue
 from threading import Lock
 
 from .base import ContainerInfo, ContainerSpec, DriverError, NodeInfo
@@ -148,3 +149,49 @@ class FakeDriver:
         # The fake treats the file name as the loaded reference so tests can
         # assert on what the daemon reported.
         return [os.path.basename(path).removesuffix(".tar")]
+
+    def open_exec(
+        self, container_id: str, cmd: list[str], *, tty: bool = True
+    ) -> tuple[str, object]:
+        if container_id not in self.containers:
+            raise DriverError("no such container")
+        return f"fake-exec-{secrets.token_hex(4)}", _FakePty(cmd)
+
+    def resize_exec(self, exec_id: str, rows: int, cols: int) -> None:
+        return None
+
+
+class _FakePty:
+    """A tiny PTY stand-in with realistic echo semantics.
+
+    A real TTY echoes every byte as it arrives and only starts a new line when it
+    sees CR/LF, which is exactly what makes xterm.js feel live. `recv` blocks like
+    a socket (with a timeout so a test cannot hang) and returns b"" on close.
+    """
+
+    def __init__(self, cmd: list[str]) -> None:
+        self.cmd = cmd
+        self.exec_id = None
+        self.closed = False
+        self._queue: Queue[bytes] = Queue()
+        self._queue.put(
+            f"FakeDriver terminal ({' '.join(cmd)}).\r\n输入命令会原样回显。\r\n$ ".encode()
+        )
+
+    def sendall(self, data: bytes) -> None:
+        if self.closed:
+            return
+        # Echo the input, then move to a fresh prompt on Enter.
+        self._queue.put(data)
+        if b"\r" in data or b"\n" in data:
+            self._queue.put(b"\r\n$ ")
+
+    def recv(self, size: int = 4096) -> bytes:
+        try:
+            return self._queue.get(timeout=60)[:size]
+        except Empty:
+            return b""
+
+    def close(self) -> None:
+        self.closed = True
+        self._queue.put(b"")

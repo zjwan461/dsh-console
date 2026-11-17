@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -65,14 +67,40 @@ def terminal_instance(client: TestClient) -> int:
 
 def test_terminal_websocket_uses_cookie_auth(client: TestClient, terminal_instance: int):
     """The terminal is a WS route: it must not be wrapped in the HTTP CSRF guard
-    (that surfaced as a 500 during the handshake) and must require admin."""
+    (that surfaced as a 500 during the handshake) and must require admin.
+
+    Protocol: the server announces readiness with a JSON text frame, then streams
+    raw PTY bytes as binary frames; keystrokes go back as binary.
+    """
     cookie = _login_cookie(client, "admin", "admin12345")
     url = f"/api/v1/admin/instances/{terminal_instance}/terminal"
     with client.websocket_connect(url, headers=cookie) as ws:
-        hello = ws.receive_text()
-        assert "terminal" in hello.lower(), hello
-        ws.send_text("echo hi")
-        assert "echo hi" in ws.receive_text()
+        ready = json.loads(ws.receive_text())
+        assert ready["type"] == "ready"
+        assert ready["shell"] == "bash"
+
+        # FakeDriver echoes what it receives; the banner arrives first.
+        banner = ws.receive_bytes()
+        assert b"FakeDriver terminal" in banner
+
+        ws.send_bytes(b"echo hi\r")
+        echoed = ws.receive_bytes()
+        assert b"echo hi" in echoed
+
+
+def test_terminal_accepts_resize_control(client: TestClient, terminal_instance: int):
+    """A resize control frame must be accepted without breaking the session."""
+    cookie = _login_cookie(client, "admin", "admin12345")
+    url = f"/api/v1/admin/instances/{terminal_instance}/terminal"
+    with client.websocket_connect(url, headers=cookie) as ws:
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        ws.receive_bytes()  # banner
+        ws.send_text(json.dumps({"type": "resize", "cols": 120, "rows": 32}))
+        ws.send_text(json.dumps({"type": "ping"}))
+        assert json.loads(ws.receive_text())["type"] == "pong"
+        # The session still works after a resize.
+        ws.send_bytes(b"pwd\r")
+        assert b"pwd" in ws.receive_bytes()
 
 
 def test_terminal_rejects_non_admin(client: TestClient, terminal_instance: int):
@@ -81,3 +109,31 @@ def test_terminal_rejects_non_admin(client: TestClient, terminal_instance: int):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(url, headers=cookie) as ws:
             ws.receive_text()
+
+
+def test_resize_exec_maps_rows_to_height():
+    """docker-py names the arguments height/width; passing h/w raises TypeError.
+
+    The exception used to be swallowed, so every resize silently failed and
+    full-screen programs stayed at 80x24.
+    """
+    from app.drivers.docker_driver import DockerDriver
+
+    calls: dict[str, object] = {}
+
+    class Api:
+        def exec_resize(self, exec_id, height=None, width=None):
+            calls.update(exec_id=exec_id, height=height, width=width)
+
+    class Client:
+        api = Api()
+
+    driver = DockerDriver()
+    driver._client = Client()  # avoid a real daemon connection
+    driver.resize_exec("exec-1", rows=30, cols=120)
+    assert calls == {"exec_id": "exec-1", "height": 30, "width": 120}
+
+    # An empty exec id (fallback path) is a no-op rather than an error.
+    calls.clear()
+    driver.resize_exec("", rows=30, cols=120)
+    assert calls == {}

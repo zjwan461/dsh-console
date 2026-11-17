@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
 from fastapi import (
@@ -201,6 +202,20 @@ def logs(
 
 @ws_router.websocket("/{instance_id}/terminal")
 async def terminal(ws: WebSocket, instance_id: int):
+    """Interactive admin shell into a user's container.
+
+    Wire protocol
+    -------------
+    client -> server : binary frames are keystrokes (raw bytes, written straight
+                       to the PTY); text frames are JSON control messages:
+                       {"type":"resize","cols":120,"rows":32}, {"type":"ping"}
+    server -> client : binary frames are PTY output (xterm.js writes them as-is);
+                       text frames are JSON control messages:
+                       {"type":"ready","shell":"bash"}, {"type":"error",...}
+
+    The PTY is a real `docker exec` with `tty=True`, so job control, colours,
+    tab completion and full-screen programs all behave like a local shell.
+    """
     sid = ws.cookies.get(settings.cookie_name)
     user_id = None
     with SessionLocal() as db:
@@ -218,32 +233,23 @@ async def terminal(ws: WebSocket, instance_id: int):
         instance = db.get(Instance, instance_id)
         container_id = instance.container_id if instance else None
     if not container_id:
-        await ws.send_text("实例没有运行中的容器\r\n")
+        await ws.send_text(json.dumps({"type": "error", "message": "实例没有运行中的容器"}))
         await ws.close()
         return
 
     driver = get_driver()
-    if settings.docker_fake:
-        await ws.send_text("FakeDriver terminal: 输入任意命令会原样回显。\r\n")
-        while True:
-            message = await _safe_receive(ws)
-            if message is None:
-                return
-            if message.get("text"):
-                await ws.send_text(f"$ {message['text']}")
-
     try:
-        container = driver.client.containers.get(container_id)
-        result = container.exec_run(["/bin/bash", "-l"], tty=True, stdin=True, socket=True)
-        raw = result.output._sock
-    except Exception as exc:
-        await ws.send_text(f"无法打开终端：{exc}\r\n")
+        exec_id, raw = driver.open_exec(container_id, ["/bin/bash", "-l"], tty=True)
+    except DriverError as exc:
+        await ws.send_text(json.dumps({"type": "error", "message": str(exc)}))
         await ws.close()
         return
 
+    await ws.send_text(json.dumps({"type": "ready", "shell": "bash"}))
+
     async def pump_output() -> None:
         while True:
-            data = await asyncio.to_thread(raw.recv, 4096)
+            data = await asyncio.to_thread(raw.recv, 65536)
             if not data:
                 break
             await ws.send_bytes(data)
@@ -253,27 +259,54 @@ async def terminal(ws: WebSocket, instance_id: int):
             message = await _safe_receive(ws)
             if message is None:
                 return
-            if message.get("bytes"):
-                await asyncio.to_thread(raw.sendall, message["bytes"])
-            elif message.get("text") is not None:
-                await asyncio.to_thread(raw.sendall, message["text"].encode())
+            payload = message.get("bytes")
+            if payload is not None:
+                await asyncio.to_thread(raw.sendall, payload)
+                continue
+            text = message.get("text")
+            if text is None:
+                continue
+            control = _parse_control(text)
+            if control is not None:
+                if control.get("type") == "resize":
+                    try:
+                        cols = max(2, min(500, int(control.get("cols", 80))))
+                        rows = max(2, min(300, int(control.get("rows", 24))))
+                    except (TypeError, ValueError):
+                        continue
+                    await asyncio.to_thread(driver.resize_exec, exec_id, rows, cols)
+                elif control.get("type") == "ping":
+                    await ws.send_text(json.dumps({"type": "pong"}))
+                continue
+            # Not JSON: treat it as typed input (older clients / manual testing).
+            await asyncio.to_thread(raw.sendall, text.encode())
 
     output_task = asyncio.create_task(pump_output())
     input_task = asyncio.create_task(pump_input())
     try:
-        done, pending = await asyncio.wait(
-            {output_task, input_task}, return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
+        await asyncio.wait({output_task, input_task}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         for task in (output_task, input_task):
             task.cancel()
         try:
             raw.close()
-        except Exception:
+        except Exception:  # noqa: BLE001 - closing a dead PTY is best effort
             pass
         try:
             await ws.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
+
+
+def _parse_control(text: str) -> dict | None:
+    """Return the parsed JSON object when `text` is a control message."""
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        return None
+    try:
+        payload = json.loads(stripped)
+    except ValueError:
+        return None
+    if isinstance(payload, dict) and "type" in payload:
+        return payload
+    return None

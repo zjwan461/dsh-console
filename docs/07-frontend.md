@@ -85,9 +85,11 @@ idle ──click──> launching（转圈）
 
 ### 4.4 管理端终端
 
-- `xterm.js` + `FitAddon`；连接前先 `POST terminal-ticket`，WS URL 带 ticket。
-- 主题跟随暗色；窗口 resize 防抖 200ms 发送 `resize`。
-- 顶部显示实例名/用户/版本，断开显示原因；禁止在页面内保存命令历史。
+- `@xterm/xterm` + `FitAddon`（`components/TerminalPanel.vue`）；cookie 鉴权直接连 WS，不需要 ticket。
+- 按键经 `onData` 编码为二进制帧发送；服务端 PTY 输出为二进制帧，直接 `term.write`，ANSI 颜色/光标/清屏由 xterm 处理。
+- 容器尺寸变化由 `ResizeObserver` + `fit()` 驱动，`onResize` 发送 `{"type":"resize"}`，服务端转发 SIGWINCH。
+- 顶部显示连接状态与快捷键提示；暗色主题与「墨」色板一致；断开显示原因。
+- 不上报命令历史，也不在浏览器持久化任何输入。
 
 ### 4.5 镜像导入
 

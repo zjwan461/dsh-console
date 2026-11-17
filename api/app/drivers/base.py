@@ -79,3 +79,13 @@ class NodeDriver(Protocol):
     def load_image(self, path: str) -> list[str]:
         """`docker load` a `docker save` tarball; returns the loaded references."""
         ...
+
+    def open_exec(
+        self, container_id: str, cmd: list[str], *, tty: bool = True
+    ) -> tuple[str, object]:
+        """Start an interactive exec; returns (exec_id, raw socket)."""
+        ...
+
+    def resize_exec(self, exec_id: str, rows: int, cols: int) -> None:
+        """Propagate a terminal resize (SIGWINCH) to the exec'd TTY."""
+        ...

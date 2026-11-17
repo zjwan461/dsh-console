@@ -15,6 +15,9 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // The admin terminal is a WebSocket on /api/v1/...; without this the
+        // dev proxy answers the upgrade with a plain HTTP 404.
+        ws: true,
       },
       '/healthz': 'http://127.0.0.1:8000',
       '/readyz': 'http://127.0.0.1:8000',

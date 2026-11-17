@@ -553,7 +553,20 @@ Published tags from the watched registry, merged with local state:
 
 ### WS `/admin/instances/{id}/terminal`
 
-M5 实现：管理员 cookie 鉴权后直接升级 WebSocket，原始字节双向转发 `docker exec /bin/bash`。不需要单独的 ticket 接口。
+M5 实现：管理员 cookie 鉴权后直接升级 WebSocket，转发一个真实的 `docker exec /bin/bash` TTY（`tty=True`，低层 API 保留 exec id 以便 resize）。不需要单独的 ticket 接口。
+
+线协议：
+
+| 方向 | 帧类型 | 含义 |
+|---|---|---|
+| 客户端 → 服务端 | binary | 原始按键字节，直接写入 PTY |
+| 客户端 → 服务端 | text | JSON 控制：`{"type":"resize","cols":120,"rows":32}`、`{"type":"ping"}` |
+| 服务端 → 客户端 | binary | PTY 输出字节，交给 xterm.js 原样渲染 |
+| 服务端 → 客户端 | text | JSON 控制：`{"type":"ready","shell":"bash"}`、`{"type":"error","message":"…"}`、`{"type":"pong"}` |
+
+- 按键走 binary，避免用户恰好输入 `{"type":...}` 时被误判为控制帧；
+- `resize` 通过 `POST /exec/{id}/resize`（docker-py 的 `exec_resize(height=, width=)`）下发 SIGWINCH，全屏程序（vim/htop）才能正确布局；
+- 断开连接即关闭 PTY 与 exec 进程。
 
 ## 13. 管理端：监控
 

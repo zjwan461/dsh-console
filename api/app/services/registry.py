@@ -184,9 +184,7 @@ class RegistryClient:
         try:
             probe = self._http.get(f"{self.base}/v2/")
         except httpx.ConnectError as exc:
-            raise RegistryError(
-                f"无法连接 {self.host}，请检查网络或设置 REGISTRY_PROXY"
-            ) from exc
+            raise RegistryError(f"无法连接 {self.host}，请检查网络或设置 REGISTRY_PROXY") from exc
         except httpx.HTTPError as exc:
             raise RegistryError(f"cannot reach {self.host}: {exc}") from exc
 

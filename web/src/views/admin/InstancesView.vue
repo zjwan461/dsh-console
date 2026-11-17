@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
+import TerminalPanel from '@/components/TerminalPanel.vue'
 
 interface AdminInstance {
   id: number
@@ -20,10 +21,8 @@ const rows = ref<AdminInstance[]>([])
 const logsVisible = ref(false)
 const logs = ref<string[]>([])
 const terminalVisible = ref(false)
-const terminalOutput = ref('')
-const terminalInput = ref('')
+const terminalInstance = ref<AdminInstance | null>(null)
 const terminalTitle = ref('')
-let socket: WebSocket | null = null
 
 async function load() {
   loading.value = true
@@ -71,36 +70,14 @@ async function showLogs(row: AdminInstance) {
 }
 
 function openTerminal(row: AdminInstance) {
+  terminalInstance.value = row
   terminalTitle.value = `${row.user.username} / ${row.dsh_version}`
-  terminalOutput.value = ''
   terminalVisible.value = true
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  socket = new WebSocket(
-    `${protocol}//${window.location.host}/api/v1/admin/instances/${row.id}/terminal`,
-  )
-  socket.onmessage = (event) => {
-    terminalOutput.value += typeof event.data === 'string' ? event.data : '[binary]'
-    const el = document.getElementById('terminal-output')
-    if (el) el.scrollTop = el.scrollHeight
-  }
-  socket.onerror = () => {
-    terminalOutput.value += '\n[连接失败]\n'
-  }
-  socket.onclose = () => {
-    terminalOutput.value += '\n[已断开]\n'
-  }
-}
-
-function sendCommand() {
-  if (!socket || socket.readyState !== WebSocket.OPEN || !terminalInput.value) return
-  socket.send(terminalInput.value + '\n')
-  terminalInput.value = ''
 }
 
 function closeTerminal() {
-  socket?.close()
-  socket = null
   terminalVisible.value = false
+  terminalInstance.value = null
 }
 
 function tag(status: string) {
@@ -190,17 +167,18 @@ onMounted(load)
     <el-dialog
       v-model="terminalVisible"
       :title="`终端 · ${terminalTitle}`"
-      width="760px"
+      width="920px"
+      top="6vh"
+      destroy-on-close
+      class="terminal-dialog"
       @closed="closeTerminal"
     >
-      <pre id="terminal-output" class="terminal">{{ terminalOutput || '正在连接…' }}</pre>
-      <div class="terminal-input">
-        <el-input v-model="terminalInput" placeholder="输入命令后回车" @keyup.enter="sendCommand" />
-        <el-button type="primary" @click="sendCommand">发送</el-button>
-      </div>
-      <template #footer>
-        <el-button @click="closeTerminal">关闭</el-button>
-      </template>
+      <TerminalPanel
+        v-if="terminalInstance"
+        :instance-id="terminalInstance.id"
+        :title="terminalTitle"
+        @close="closeTerminal"
+      />
     </el-dialog>
   </div>
 </template>
@@ -223,8 +201,7 @@ onMounted(load)
   white-space: nowrap;
 }
 
-.logs,
-.terminal {
+.logs {
   background: #101820;
   color: #d7e2e8;
   border-radius: 8px;
@@ -236,9 +213,7 @@ onMounted(load)
   white-space: pre-wrap;
 }
 
-.terminal-input {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
+:deep(.terminal-dialog .el-dialog__body) {
+  padding-top: 4px;
 }
 </style>

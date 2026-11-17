@@ -252,3 +252,49 @@ class DockerDriver:
             for tag in image.get("RepoTags") or []:
                 refs.append(tag)
         return refs
+
+    def open_exec(
+        self, container_id: str, cmd: list[str], *, tty: bool = True
+    ) -> tuple[str, object]:
+        """Start an interactive exec and return (exec_id, raw socket).
+
+        The low-level API is used instead of `container.exec_run` because the
+        exec id is needed afterwards for `exec_resize` (SIGWINCH); without it a
+        full-screen program cannot know the terminal size.
+        """
+        api = self.client.api
+        try:
+            created = api.exec_create(
+                container_id,
+                cmd,
+                tty=tty,
+                stdin=True,
+                stdout=True,
+                stderr=True,
+            )
+            exec_id = created["Id"]
+            started = api.exec_start(exec_id, tty=tty, socket=True)
+        except Exception as exc:
+            # Older daemons / unusual proxies can reject the socket upgrade; fall
+            # back to the high-level call, which still gives a working shell but
+            # cannot be resized.
+            log.warning("low-level exec failed, falling back: %s", exc)
+            try:
+                container = self.client.containers.get(container_id)
+                result = container.exec_run(cmd, tty=tty, stdin=True, socket=True)
+            except Exception as exc2:
+                raise DriverError(f"cannot open terminal: {exc2}") from exc2
+            return "", getattr(result.output, "_sock", result.output)
+        # docker-py returns either a SocketIO wrapper or a bare socket depending
+        # on version; normalise to something with sendall/recv/close.
+        raw = getattr(started, "_sock", started)
+        return exec_id, raw
+
+    def resize_exec(self, exec_id: str, rows: int, cols: int) -> None:
+        if not exec_id:
+            return
+        try:
+            # docker-py names these height/width (they map to the API's h/w).
+            self.client.api.exec_resize(exec_id, height=rows, width=cols)
+        except Exception:  # noqa: BLE001 - a resize race must not kill the session
+            log.debug("exec resize failed for %s", exec_id, exc_info=True)
