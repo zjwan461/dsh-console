@@ -195,7 +195,7 @@ async def terminal(ws: WebSocket, instance_id: int):
         return
 
     driver = get_driver()
-    if settings.docker_fake or not hasattr(driver, "client"):
+    if settings.docker_fake:
         await ws.send_text("FakeDriver terminal: 输入任意命令会原样回显。\r\n")
         try:
             while True:
