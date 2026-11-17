@@ -42,6 +42,19 @@ docker pull ghcr.io/zjwan461/dsh-console-web:latest
 
 > M2 起 `console-api` 挂载 `/var/run/docker.sock` 与 `./data`，并加入 `dsh-edge` 网络。这是 root 等价权限，务必只让 Caddy 访问 API，不要把 8000 端口发布出去。
 
+### 管理员账号
+
+首次启动且 `users` 表为空时，用 `BOOTSTRAP_ADMIN_USERNAME` / `BOOTSTRAP_ADMIN_PASSWORD` 创建（密码留空则随机生成并打印在日志里）。之后改环境变量不会重置任何账号，用 CLI 找回：
+
+```bash
+cd api
+python -m app.cli list-users                                   # 有哪些账号
+python -m app.cli reset-password admin --password 'NewPassw0rd!'  # 重置
+python -m app.cli create-admin ops --password 'NewPassw0rd!'      # 再加一个管理员
+```
+
+CLI 直接读写数据库、不经过 API，所以 API 挂了也能用；重置会同时吊销该账号的所有会话。详见 [05 文档 §3.3](docs/05-deployment-ops.md)。
+
 ## 本地开发（不需要 Docker / MySQL / Redis）
 
 ```bash

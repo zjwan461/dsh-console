@@ -129,6 +129,29 @@ docker compose logs -f console-api     # 等 alembic upgrade head 完成、/read
 3. 若 `users` 为空，用 `BOOTSTRAP_ADMIN_*` 建管理员；
 4. 创建 `dsh-edge` 网络，并向 Caddy 下发全量配置（console + 已有实例路由）。
 
+### 3.3 忘了管理员密码怎么办
+
+`BOOTSTRAP_ADMIN_*` **只在 `users` 表为空时生效**，之后改环境变量不会重置任何账号。
+三种找回方式，按推荐顺序：
+
+```bash
+# 1) 直接重置（最常用）。在 api/ 目录下、指向同一个 DATABASE_URL
+cd api
+DATABASE_URL='mysql+pymysql://dsh:***@mysql:3306/dsh_console?charset=utf8mb4' \
+  python -m app.cli reset-password admin --password 'NewPassw0rd!'
+# 加 --no-force-change 可免去「下次登录必须改密」
+
+# 2) 忘了用户名：列出现有账号
+python -m app.cli list-users
+
+# 3) 再建一个管理员
+python -m app.cli create-admin ops --password 'NewPassw0rd!'
+```
+
+> CLI 直接读写数据库，**不经过 API**，所以 API 挂了、控制台进不去时也能用；它会同时吊销该账号的全部会话。
+> 不传 `--password` 时会生成一个随机口令并打印出来。
+> 如果本地开发用的是全新的 SQLite、又没设 `BOOTSTRAP_ADMIN_PASSWORD`，启动日志里会有一行 WARNING 打印随机口令，也可以直接 `python -m app.cli reset-password admin --password ...` 覆盖。
+
 ## 4. 导入 DSH 版本
 
 三种入口，都在管理端「版本」页：
