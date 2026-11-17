@@ -6,15 +6,28 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..drivers import get_driver
+from ..drivers import DriverError, get_driver
 from ..errors import ApiError
 from ..models import Instance, InstanceStatus
 
 
 def probe_capacity(db: Session) -> dict:
-    driver = get_driver()
-    info = driver.info()
-    mem_total_mb = int(info.mem_total_bytes / (1024 * 1024))
+    """Current host capacity.
+
+    Never raises: an unreachable Docker daemon must degrade the dashboards, not
+    turn them into 500s. Callers that need to *act* on capacity use `admit()`,
+    which refuses when the probe could not reach the runtime.
+    """
+    try:
+        info = get_driver().info()
+        docker_ok = True
+        docker_error = None
+    except DriverError as exc:
+        info = None
+        docker_ok = False
+        docker_error = str(exc)[:200]
+
+    mem_total_mb = int(info.mem_total_bytes / (1024 * 1024)) if info else 0
     reserve_mb = max(
         settings.memory_reserve_mb, int(mem_total_mb * settings.memory_reserve_percent / 100)
     )
@@ -39,11 +52,14 @@ def probe_capacity(db: Session) -> dict:
         disk_free_gb = 0
 
     mem_limit_mb = max(0, mem_total_mb - reserve_mb)
-    cpu_limit = info.cpu_cores * settings.cpu_overcommit
+    cpu_cores = info.cpu_cores if info else 0
+    cpu_limit = cpu_cores * settings.cpu_overcommit
     disk_limit_gb = int(disk_total_gb * settings.disk_use_ratio)
 
     return {
-        "cpu_cores": info.cpu_cores,
+        "docker_ok": docker_ok,
+        "docker_error": docker_error,
+        "cpu_cores": cpu_cores,
         "cpu_committed": round(cpu_committed, 2),
         "cpu_limit": round(cpu_limit, 2),
         "cpu_overcommit": settings.cpu_overcommit,
@@ -55,17 +71,24 @@ def probe_capacity(db: Session) -> dict:
         "disk_free_gb": disk_free_gb,
         "disk_committed_gb": disk_committed,
         "disk_limit_gb": disk_limit_gb,
-        "containers_running": info.containers_running,
-        "docker_version": info.docker_version,
+        "containers_running": info.containers_running if info else 0,
+        "docker_version": info.docker_version if info else "unavailable",
         "can_admit": {
-            "cpu": cpu_committed < cpu_limit,
-            "memory": mem_committed_mb < mem_limit_mb,
-            "disk": disk_committed < disk_limit_gb,
+            "cpu": docker_ok and cpu_committed < cpu_limit,
+            "memory": docker_ok and mem_committed_mb < mem_limit_mb,
+            "disk": docker_ok and disk_committed < disk_limit_gb,
         },
     }
 
 
 def admit(capacity: dict, cpu_cores: float, memory_mb: int, disk_gb: int) -> None:
+    if not capacity.get("docker_ok", True):
+        raise ApiError(
+            "DOCKER_UNAVAILABLE",
+            "容器运行时不可用，暂时无法创建实例",
+            503,
+            {"error": capacity.get("docker_error")},
+        )
     if capacity["mem_committed_mb"] + memory_mb > capacity["mem_limit_mb"]:
         raise ApiError(
             "INSTANCE_QUOTA_MEMORY",

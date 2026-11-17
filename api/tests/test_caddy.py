@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.db import SessionLocal
+from app.drivers import DriverError, get_driver, reset_driver
 from app.services.caddy import build_config
+from app.services.capacity import probe_capacity
 
 
 def _login(client: TestClient, username: str, password: str) -> str:
@@ -60,3 +63,42 @@ def test_public_scheme_http_skips_tls(client: TestClient):
     # The test environment runs with PUBLIC_SCHEME=http.
     assert config["apps"]["http"]["servers"]["srv0"]["listen"] == [":80"]
     assert "tls" not in config["apps"]
+
+
+def test_capacity_degrades_when_docker_is_down(client: TestClient, monkeypatch):
+    """An unreachable runtime must degrade the dashboards, not 500 them."""
+
+    class Broken:
+        def info(self):
+            raise DriverError("cannot connect to Docker")
+
+        def ensure_network(self, name):  # pragma: no cover
+            raise DriverError("cannot connect to Docker")
+
+    monkeypatch.setattr("app.services.capacity.get_driver", lambda: Broken())
+    with SessionLocal() as db:
+        capacity = probe_capacity(db)
+    assert capacity["docker_ok"] is False
+    assert capacity["docker_error"]
+    assert capacity["can_admit"] == {"cpu": False, "memory": False, "disk": False}
+
+    # Admin overview must still render.
+    client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "admin12345", "remember": True},
+    )
+    response = client.get("/api/v1/admin/metrics/overview")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["capacity"]["docker_ok"] is False
+
+    # Creating an instance must fail with a clear 503, not admit blindly.
+    from app.errors import ApiError
+    from app.services.capacity import admit
+
+    with pytest.raises(ApiError) as excinfo:
+        admit(capacity, 1, 1024, 10)
+    assert excinfo.value.code == "DOCKER_UNAVAILABLE"
+    assert excinfo.value.status_code == 503
+
+    reset_driver()
+    assert get_driver() is not None

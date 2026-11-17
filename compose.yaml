@@ -76,6 +76,10 @@ services:
     networks: [console]
 
   console-api:
+    # `image` + `build` together: `docker compose up --build` builds locally,
+    # while `docker compose pull && docker compose up -d` uses the image CI
+    # published to GHCR. Forks override the two *_IMAGE variables in .env.
+    image: ${CONSOLE_API_IMAGE:-ghcr.io/zjwan461/dsh-console-api:latest}
     build:
       context: ./api
       args:
@@ -102,6 +106,7 @@ services:
     networks: [console]
 
   console-worker:
+    image: ${CONSOLE_API_IMAGE:-ghcr.io/zjwan461/dsh-console-api:latest}
     build:
       context: ./api
     restart: unless-stopped
@@ -121,6 +126,7 @@ services:
     networks: [console]
 
   console-web:
+    image: ${CONSOLE_WEB_IMAGE:-ghcr.io/zjwan461/dsh-console-web:latest}
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
