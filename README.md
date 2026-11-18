@@ -1,6 +1,6 @@
 # 优墨云舱 · DSH 云电脑控制台
 
-**一人一舱，随处开工。** 把 [`dsh-docker`](../dsh-docker) 的单用户部署，变成**多用户、可计量、可运维**的云端工作舱：登录即用、离开休眠、按活跃时长计费、版本一键升级。
+**一人一舱，随处开工。** 把 [`dsh-docker`](https://github.com/zjwan461/dsh-docker) 的单用户部署，变成**多用户、可计量、可运维**的云端工作舱：登录即用、离开休眠、按活跃时长计费、版本一键升级。
 
 [![build-images](https://github.com/zjwan461/dsh-console/actions/workflows/build-images.yml/badge.svg)](https://github.com/zjwan461/dsh-console/actions/workflows/build-images.yml)
 [![security](https://github.com/zjwan461/dsh-console/actions/workflows/security.yml/badge.svg)](https://github.com/zjwan461/dsh-console/actions/workflows/security.yml)
@@ -28,6 +28,12 @@
 | ![工作台](docs/images/dashboard.jpg) | ![版本管理](docs/images/versions.jpg) |
 | **实例运维**：强制启停、日志、Web 终端 | **用户与配额**：套餐、时长、重置密码 |
 | ![实例运维](docs/images/instances.jpg) | ![用户管理](docs/images/users.jpg) |
+
+### 从创建到终端（约 8 秒）
+
+![创建实例并打开 Web 终端](docs/images/demo.gif)
+
+> 用户在工作台创建云舱 → 管理员在「全站实例」打开真实 PTY 终端（`docker exec` + xterm.js）。录屏使用本地 FakeDriver 演示环境。
 
 ## 核心能力
 
@@ -163,6 +169,7 @@ python scripts/shots.py --out shots/before
 ```bash
 python scripts/seed_demo.py      # 本地 FakeDriver 环境
 python scripts/readme_shots.py   # 输出 docs/images/*.jpg
+python scripts/readme_demo.py    # 录屏并生成 docs/images/demo.gif（需要 ffmpeg）
 ```
 
 ## 真机回归脚本
