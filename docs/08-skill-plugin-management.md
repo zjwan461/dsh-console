@@ -1,6 +1,6 @@
 # 08 · Skill 与插件管理设计
 
-> 状态：设计已定稿，待实现
+> 状态：技能已实现（P0）；插件离线部分已实现（P1），真机加载/回滚待验证
 > 前置决策（2026-11-18）：
 > 1. 用户对「管理员开放的 skill」**默认全启用**；
 > 2. 用户在 workspace 里自己放 `.dsh/skills` 属个人行为，**不做监管**，控制台只提供平台技能仓库；
@@ -102,7 +102,8 @@ user_skill_prefs
 ```
 
 - 新建 / 导入 → `draft`；
-- 编辑已发布 skill → 生成新 revision，仍为 `draft`，发布后生效；
+- 编辑已发布 skill → 生成新 revision，**保持 published**，保存即热更新到实例；
+- 草稿编辑仍是草稿，发布后才进入用户可见集合；
 - 发布：写 DB + 触发受影响实例同步（热重载）；
 - 停用：从所有实例移除，不删历史；
 - 回滚：切回旧 revision 并发布。
@@ -126,9 +127,9 @@ user_skill_prefs
 **在线创建 / 编辑**
 
 - 表单字段：name、display_name、description、whenToUse、modelInvocable、userInvocable；
-- 正文 Markdown 编辑器，前端预览；
-- 附件/脚本：文件树上传、删除、重命名；文本文件可在线编辑；
-- 保存生成新 revision，旧 revision 不可变。
+- 正文 Markdown 编辑器（保存生成新 revision，旧 revision 不可变）；
+- 脚本/附件随导入包一起保存，详情页展示文件清单；
+- 文件树在线编辑/重命名留到后续版本（当前用「导入新版本」替换附件）。
 
 ### 3.5 物化（关键）
 
@@ -183,10 +184,9 @@ POST   /admin/skills/import              # multipart zip/tar/md
 GET    /admin/skills/{id}/revisions
 POST   /admin/skills/{id}/publish
 POST   /admin/skills/{id}/rollback       # {revision_id}
-PUT    /admin/skills/{id}/grants         # {scope, target_ids}
-GET    /admin/skills/{id}/usage          # 哪些实例已同步
+PUT    /admin/skills/{id}/grants         # {grants: [{scope, target_id}]}
 
-GET    /me/skills                        # 允许集合 + 我的启用状态 + 来源
+GET    /me/skills                        # 允许集合 + 我的启用状态
 PUT    /me/skills                        # {enabled_ids}
 ```
 
@@ -195,7 +195,7 @@ PUT    /me/skills                        # {enabled_ids}
 **管理端「技能」页**
 
 - 列表：名称、描述、来源、状态、开放范围、revision、更新时间；
-- 详情抽屉：Markdown 正文、frontmatter 表单、文件树、revision 历史；
+- 详情弹窗：frontmatter 表单 + Markdown 正文 + 文件清单 + 版本历史/回滚；
 - 导入按钮、发布/停用、开放范围（全员 / 套餐 / 用户）；
 - 操作写审计：`admin.skill_create/import/update/publish/grant/disable`。
 
@@ -217,7 +217,7 @@ PUT    /me/skills                        # {enabled_ids}
 | 用户能否开关 | **不能**，用户侧最多只读展示 |
 | 镜像内置插件 | 不接管，始终生效 |
 | 生效方式 | 物化 + **重启实例**（需要重建容器） |
-| 版本兼容 | 与 DSH 镜像版本绑定，分配前校验 |
+| 版本兼容 | 记录 `peerDependencies` / `dsh` 范围并在界面展示；硬性拒绝放到真机验证阶段 |
 
 原因：插件是跑在 DSH 服务进程里的 Node 代码，能读 `$DSH_HOME/.credentials.yaml`、模型 Key 环境变量和网络，不是 agent 沙箱内的内容。用户可开关插件等于让用户给自己容器装任意后端代码。
 
@@ -239,55 +239,48 @@ plugin_grants
 plugin_assignments（可选视图，也可实时计算）
 ```
 
-### 4.3 物化：合并根 + 受控 patch
+### 4.3 物化：只读子路径挂载 + 受控 patch
 
-**不能直接把 `DSH_PLUGIN_ROOT` 指到平台目录**，否则镜像内置插件会全部消失。做法是构造一个“合并根”：
+**不能把 `DSH_PLUGIN_ROOT` 指到平台目录**，否则镜像内置插件会全部消失。实现改用**逐插件子路径挂载**：
 
 ```
-<instance.data_path>/plugins/
-    <builtin-name> -> /opt/dsh-plugins/<builtin-name>   # 符号链接，容器内解析
-    <platform-name>/                                    # 复制实体
+宿主机 <instance.data_path>/plugins/<flat>/
+    -> 容器 /opt/dsh-plugins/<flat>   (ro)
 ```
 
-- 只有在实例**有平台插件分配**时才创建这个根并设置 `DSH_PLUGIN_ROOT=/data/dsh/plugins`；没有分配时保持镜像默认 `/opt/dsh-plugins`，行为完全不变；
-- 内置插件名从镜像清单获得（按 DSH 版本缓存，见 4.5）；
-- 平台插件目录复制 revision 内容，权限 `a+rX`；
-- 生成后用 `DSH_PLUGIN_ROOT` 交给 entrypoint，由它完成软链 + patch 播种；
-- 平台插件如果与内置同名，拒绝分配（避免覆盖）。
+- `DSH_PLUGIN_ROOT` 保持默认 `/opt/dsh-plugins`，entrypoint 照常扫描，内置插件天然保留；
+- 平台插件按分配结果复制/移除，每个插件一条 bind mount；
+- 挂载点变化会进入 `config_hash`，实例启动/重启时自动重建容器；
+- `flat` 是包名扁平化（`@scope/name` → `scope__name`），因为 entrypoint 只扫描一层目录；
+- 平台插件与内置插件同名时，容器内挂载会遮蔽内置目录——真机阶段需要增加同名检测（见 4.5 待办）。
 
 **patch 管理**
 
-entrypoint 只加不删，所以控制台必须能移除。约定：
+entrypoint 在容器启动时只为**新出现的插件**播种 patch，且从不删除。控制台在禁用插件时：
 
-- 控制台写入的平台插件 patch 块带双标记：
+- 先删 `<data_path>/plugins/<flat>`，下一次 `_spec()` 不再带这条挂载；
+- 同时从 `$DSH_HOME/cordis.patch.yml` 删除该插件的 `# bundled plugin: <name>` 块；
+- 只删平台插件表里存在的包名，镜像内置插件的块不动；
+- 删块后实例标记 `needs_restart`，重启即可正常启动（不会 `plugin tree failed to load`）。
 
-  ```yaml
-  # >>> dsh-console plugin: @acme/foo
-  # bundled plugin: @acme/foo
-  - insert:
-      - id: foo
-        name: '@acme/foo'
-  # <<< dsh-console plugin: @acme/foo
-  ```
+块边界按 entrypoint 自己写的格式识别：从 `# bundled plugin: <name>` 到下一个
+`# bundled plugin:` / `# --- bundled plugins` 或文件末尾。
 
-- `# bundled plugin:` 这行让 entrypoint 认为已经播种过，不会重复追加；
-- 禁用/卸载时按 `# >>>`/`# <<<` 精确删块；**同时**删目录，再重启；
-- 只碰自己的块，保留用户手改的其他段落；写前备份 `cordis.patch.yml.console.bak`；
-- 若文件被外部改坏导致容器起不来：回滚到备份 + 移除该插件，标记 `quarantined` 并告警。
+**启用**则不需要控制台写 patch：新挂载让 entrypoint 认为它是“未播种”的插件，自动追加。
 
 ### 4.4 生效与失败处理
 
 - 分配/撤销后实例标记 `needs_restart=true`，前端显示「待重启」；
-- 管理员可一键重启（或下次用户启动时生效）；
-- 重启前做健康检查；失败则自动回滚到上一个可用插件集并再次重启，插件置为 `quarantined`；
+- 管理员可重启（或下次用户启动时生效）；
+- 重启后健康检查；失败自动回滚插件集合并隔离插件——**待在真机阶段实现并验证**；
 - 记录事件：`plugins_changed`、`restart_required`、`plugin_rollback`。
 
 ### 4.5 兼容性
 
-- 导入时解析 `package.json` 的 `peerDependencies` / `dsh` 字段，记录支持的 DSH 版本范围；
-- 分配时对比实例 `dsh_version`，不匹配则拒绝并提示；
-- 每次 DSH 版本升级后，worker 扫描已分配插件，标记不兼容项，提示管理员处理；
-- 镜像内置插件清单按 `image_ref` 缓存（通过 Docker archive 读取 `plugins/*/package.json`，不落实例）。
+- 导入时解析 `package.json` 的 `peerDependencies` / `dsh` 字段，记录支持的 DSH 版本范围，界面展示；
+- 分配时对比实例 `dsh_version` 并硬性拒绝——**待在真机阶段实现**；
+- 每次 DSH 版本升级后，worker 扫描已分配插件并标记不兼容项——**待在真机阶段实现**；
+- 同名遮蔽检测（平台插件 vs 镜像内置）——**待在真机阶段实现**。
 
 ### 4.6 API
 
@@ -295,15 +288,14 @@ entrypoint 只加不删，所以控制台必须能移除。约定：
 GET    /admin/plugins
 POST   /admin/plugins/import          # multipart zip/tar（bundle）
 GET    /admin/plugins/{id}
-PUT    /admin/plugins/{id}            # 元数据 / 版本
-DELETE /admin/plugins/{id}
-GET    /admin/plugins/{id}/revisions
-PUT    /admin/plugins/{id}/grants
-POST   /admin/plugins/{id}/assign     # 或统一走 grants
-GET    /admin/instances/{id}/plugins  # 已分配 / 已物化 / 需重启
+POST   /admin/plugins/{id}/enable
+POST   /admin/plugins/{id}/disable
+PUT    /admin/plugins/{id}/grants     # {grants: [{scope, target_id}]}
+
+GET    /me/plugins                    # 只读：已分配插件 + 是否待重启
 ```
 
-用户端不提供写接口；如需展示，`GET /me/plugins` 只读。
+用户端不提供写接口。
 
 ## 5. 实例配置与状态
 
@@ -332,13 +324,13 @@ plugins_desired = hash(sorted(granted plugin revisions))
 
 当前容器 label `dsh.console.config_hash` 覆盖 env、mounts、资源、base_url/model。新增：
 
-- `DSH_PLUGIN_ROOT` 变化 → 进 config_hash（必须重建容器）；
+- 平台插件的**挂载列表**变化 → 进 config_hash（重建容器）；
 - skill 集合**不进** config_hash（热重载，重建无意义）。
 
 ## 6. 迁移与兼容
 
 1. **先上 Skill**：只做加法，物化到 `$DSH_HOME/skills`，不设 `DSH_BUNDLED_SKILL_DIR`；现有实例重启后多出平台技能，内置不变；
-2. **插件后上**：没有分配就不设 `DSH_PLUGIN_ROOT`，现有实例零变化；
+2. **插件后上**：没有分配就没有额外挂载，`DSH_PLUGIN_ROOT` 保持默认，现有实例零变化；
 3. 首次开启插件管理时，对已有实例不自动分配任何平台插件；
 4. DB 迁移新增表，`instances` 加列，全部可空/有默认；
 5. 回滚：停用所有平台 skill/plugin → 删除物化目录即可恢复原状。
@@ -367,16 +359,16 @@ plugins_desired = hash(sorted(granted plugin revisions))
 
 ## 9. 实施计划
 
-| 阶段 | 内容 | 预估 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
-| P0-1 | 数据模型 + 迁移 + skill 导入/校验/存储 | 1.5 天 |
-| P0-2 | 管理端技能 CRUD / 编辑器 / 发布 / 授权 | 2 天 |
-| P0-3 | 用户端技能开关 + 物化 + 热同步 + reconcile | 1.5 天 |
-| P0-4 | 测试：frontmatter/zip 安全/默认启用/同步/漂移 | 1 天 |
-| P1-1 | 插件模型 + bundle 校验 + 兼容性 | 1.5 天 |
-| P1-2 | 合并根 + patch 管理 + 重启/回滚 | 2 天 |
-| P1-3 | 管理端插件页 + 套餐/用户分配 | 1.5 天 |
-| P1-4 | 真机验证（插件加载、禁用、回滚） | 1 天 |
+| P0-1 | 数据模型 + 迁移 + skill 导入/校验/存储 | ✅ |
+| P0-2 | 管理端技能 CRUD / 编辑器 / 发布 / 授权 | ✅ |
+| P0-3 | 用户端技能开关 + 物化 + 热同步 + reconcile | ✅ |
+| P0-4 | 测试：frontmatter/zip 安全/默认启用/同步/漂移 | ✅ |
+| P1-1 | 插件模型 + bundle 校验 + 兼容性记录 | ✅ |
+| P1-2 | 子路径挂载 + patch 清理 + 待重启 | ✅（离线） |
+| P1-3 | 管理端插件页 + 套餐/用户分配 | ✅ |
+| P1-4 | 真机验证（插件加载、禁用、回滚、同名检测） | ⏳ 需要 Docker |
 
 ## 10. 测试要点
 

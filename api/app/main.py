@@ -22,8 +22,10 @@ from .routers import (
     admin_invites,
     admin_metrics,
     admin_plans,
+    admin_plugins,
     admin_quotas,
     admin_settings,
+    admin_skills,
     admin_users,
     announcements,
     auth,
@@ -31,6 +33,7 @@ from .routers import (
     files,
     instances,
     me,
+    me_skills,
     snapshots,
     system,
     tickets,
@@ -174,8 +177,11 @@ for router in (
     admin_instances.router,
     admin_metrics.router,
     admin_settings.router,
+    admin_skills.router,
+    admin_plugins.router,
     admin_audit.router,
     system.router,
+    me_skills.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)
 

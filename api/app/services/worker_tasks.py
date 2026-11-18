@@ -167,5 +167,19 @@ def registry_once(db: Session) -> dict:
     return image_catalog.check_once(db)
 
 
+def skills_once(db: Session) -> dict:
+    """Repair skill materialisation drift on every live instance."""
+    from . import skills
+
+    return skills.sync_all_instances(db)
+
+
+def plugins_once(db: Session) -> dict:
+    """Repair plugin materialisation drift on every live instance."""
+    from . import plugins
+
+    return plugins.sync_all_instances(db)
+
+
 def flush_once(db: Session) -> dict:
     return metering.flush(db)

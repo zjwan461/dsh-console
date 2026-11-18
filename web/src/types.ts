@@ -119,6 +119,7 @@ export interface Instance {
   url: string
   spec: { cpu_cores: number; memory_mb: number; disk_gb: number }
   idle_timeout_seconds: number
+  needs_restart?: boolean
   last_active_at: string | null
   last_started_at: string | null
   last_stopped_at: string | null

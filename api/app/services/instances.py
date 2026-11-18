@@ -276,6 +276,12 @@ def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
         user_image = db.get(UserImage, instance.user_image_id)
         if user_image is not None and user_image.status.value == "ready":
             image_ref = user_image.image_ref
+    from . import plugins as plugin_repo
+
+    platform_plugin_mounts = [
+        (host_path(str(host)), target, True)
+        for host, target, _ro in plugin_repo.plugin_mounts(db, instance)
+    ]
     spec = ContainerSpec(
         name=instance.container_name,
         image=image_ref,
@@ -283,6 +289,7 @@ def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
         mounts=[
             (host_path(instance.data_path), "/data/dsh", False),
             (host_path(instance.workspace_path), "/workspaces", False),
+            *platform_plugin_mounts,
         ],
         cpu_cores=float(instance.cpu_cores),
         memory_mb=instance.memory_mb,
@@ -435,6 +442,11 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
             raise RuntimeError("image record disappeared")
         _ensure_dirs(instance)
         _write_model_settings(instance, db)
+        from . import plugins as plugin_repo
+        from . import skills as skill_repo
+
+        skill_repo.sync_instance_skills(db, instance)
+        plugin_repo.sync_instance_plugins(db, instance)
         spec = _spec(instance, image, db)
         if _needs_recreate(instance, spec, driver):
             if instance.container_id:
@@ -451,6 +463,7 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
             raise RuntimeError(f"container did not become healthy (status={info.status})")
         previous = instance.status
         instance.status = InstanceStatus.running
+        instance.needs_restart = False
         instance.health = "healthy"
         instance.error = None
         instance.status_reason = None
@@ -503,6 +516,11 @@ def start_instance(
             raise RuntimeError("image record disappeared")
         _ensure_dirs(instance)
         _write_model_settings(instance, db)
+        from . import plugins as plugin_repo
+        from . import skills as skill_repo
+
+        skill_repo.sync_instance_skills(db, instance)
+        plugin_repo.sync_instance_plugins(db, instance)
         spec = _spec(instance, image, db)
         if _needs_recreate(instance, spec, driver):
             if instance.container_id:
@@ -519,6 +537,7 @@ def start_instance(
         if info.status in {"exited", "dead"}:
             raise RuntimeError("container exited during startup")
         instance.status = InstanceStatus.running
+        instance.needs_restart = False
         instance.health = "healthy"
         instance.error = None
         instance.last_started_at = info.started_at or utcnow()
@@ -630,6 +649,11 @@ def restart_instance(
         # settings.yaml (endpoint) and the env (key) are read at container start;
         # a changed config means the old container can no longer be reused.
         _write_model_settings(instance, db)
+        from . import plugins as plugin_repo
+        from . import skills as skill_repo
+
+        skill_repo.sync_instance_skills(db, instance)
+        plugin_repo.sync_instance_plugins(db, instance)
         spec = _spec(instance, image, db)
         if _needs_recreate(instance, spec, driver):
             if instance.container_id:
@@ -649,6 +673,7 @@ def restart_instance(
             driver.start(instance.container_id)
         info = driver.wait_healthy(instance.container_id)
         instance.status = InstanceStatus.running
+        instance.needs_restart = False
         instance.health = "healthy"
         instance.error = None
         instance.last_started_at = info.started_at or utcnow()
@@ -720,6 +745,7 @@ def instance_view(instance: Instance, db: Session) -> dict:
             "disk_gb": instance.disk_gb,
         },
         "idle_timeout_seconds": instance.idle_timeout_seconds,
+        "needs_restart": bool(instance.needs_restart),
         "last_active_at": instance.last_active_at.isoformat() + "Z"
         if instance.last_active_at
         else None,

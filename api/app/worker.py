@@ -74,6 +74,8 @@ async def main() -> None:
         asyncio.create_task(every(settings.usage_flush_seconds, "quota", worker_tasks.quota_once)),
         asyncio.create_task(every(3600, "reset", worker_tasks.reset_cycles)),
         asyncio.create_task(every(60, "reconcile", worker_tasks.reconcile_once)),
+        asyncio.create_task(every(60, "skills", worker_tasks.skills_once)),
+        asyncio.create_task(every(60, "plugins", worker_tasks.plugins_once)),
     ]
     if settings.node_metrics_enabled:
         tasks.append(

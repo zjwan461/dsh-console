@@ -76,6 +76,18 @@ const router = createRouter({
           meta: { admin: true, title: '邀请码' },
         },
         {
+          path: 'admin/skills',
+          name: 'admin-skills',
+          component: () => import('@/views/admin/SkillsView.vue'),
+          meta: { admin: true, title: '技能仓库' },
+        },
+        {
+          path: 'admin/plugins',
+          name: 'admin-plugins',
+          component: () => import('@/views/admin/PluginsView.vue'),
+          meta: { admin: true, title: '插件目录' },
+        },
+        {
           path: 'admin/settings',
           name: 'admin-settings',
           component: () => import('@/views/admin/SystemSettingsView.vue'),

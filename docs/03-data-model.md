@@ -216,6 +216,10 @@ CREATE TABLE instances (
   last_stopped_at     DATETIME(3) NULL,
   health              ENUM('unknown','healthy','unhealthy') NOT NULL DEFAULT 'unknown',
   error               VARCHAR(500) NULL,
+  skills_revision     VARCHAR(64) NULL COMMENT '物化后的技能集合哈希',
+  plugins_revision    VARCHAR(64) NULL COMMENT '物化后的插件集合哈希',
+  needs_restart       TINYINT(1) NOT NULL DEFAULT 0 COMMENT '插件变更待重启',
+  config_synced_at    DATETIME(3) NULL,
   created_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
@@ -440,6 +444,80 @@ CREATE TABLE provider_credentials (
   PRIMARY KEY (id),
   UNIQUE KEY uk_cred_scope (scope, user_id, provider)
 ) ENGINE=InnoDB COMMENT='模型 API Key，加密存储';
+```
+
+### 2.16 技能与插件
+
+```sql
+-- 平台技能仓库（镜像内置 skill 不入库，也不受控制台管理）
+CREATE TABLE skills (
+  id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name                VARCHAR(64) NOT NULL,
+  display_name        VARCHAR(128) NOT NULL DEFAULT '',
+  description         VARCHAR(500) NOT NULL DEFAULT '',
+  when_to_use         VARCHAR(500) NOT NULL DEFAULT '',
+  model_invocable     TINYINT(1) NOT NULL DEFAULT 1,
+  user_invocable      TINYINT(1) NOT NULL DEFAULT 1,
+  status              ENUM('draft','published','disabled') NOT NULL DEFAULT 'draft',
+  source              VARCHAR(16) NOT NULL DEFAULT 'create',
+  current_revision_id BIGINT UNSIGNED NULL,
+  created_by          BIGINT UNSIGNED NULL,
+  created_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_skills_name (name),
+  KEY idx_skills_status (status)
+) ENGINE=InnoDB COMMENT='平台技能元数据';
+
+CREATE TABLE skill_revisions (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  skill_id     BIGINT UNSIGNED NOT NULL,
+  rev          INT UNSIGNED NOT NULL,
+  storage_path VARCHAR(512) NOT NULL COMMENT 'DATA_ROOT/skills/<id>/<rev>',
+  checksum     CHAR(64) NOT NULL,
+  size_bytes   INT UNSIGNED NOT NULL DEFAULT 0,
+  manifest     JSON NULL COMMENT 'frontmatter 归一化结果 + 文件清单',
+  changelog    VARCHAR(500) NOT NULL DEFAULT '',
+  created_by   BIGINT UNSIGNED NULL,
+  created_at   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_skill_rev (skill_id, rev),
+  KEY idx_skill_rev_skill (skill_id),
+  CONSTRAINT fk_skill_rev FOREIGN KEY (skill_id) REFERENCES skills (id) ON DELETE CASCADE
+) ENGINE=InnoDB COMMENT='不可变版本快照';
+
+CREATE TABLE skill_grants (
+  id        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  skill_id  BIGINT UNSIGNED NOT NULL,
+  scope     ENUM('all','plan','user') NOT NULL,
+  target_id BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'all 固定 0',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_skill_grant (skill_id, scope, target_id),
+  CONSTRAINT fk_skill_grant FOREIGN KEY (skill_id) REFERENCES skills (id) ON DELETE CASCADE
+) ENGINE=InnoDB COMMENT='开放范围';
+
+CREATE TABLE user_skill_prefs (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  skill_id   BIGINT UNSIGNED NOT NULL,
+  enabled    TINYINT(1) NOT NULL DEFAULT 1,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_skill (user_id, skill_id),
+  KEY idx_user_skill_user (user_id),
+  CONSTRAINT fk_user_skill_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  CONSTRAINT fk_user_skill_skill FOREIGN KEY (skill_id) REFERENCES skills (id) ON DELETE CASCADE
+) ENGINE=InnoDB COMMENT='缺省视为启用';
+```
+
+插件表 `plugins` / `plugin_revisions` / `plugin_grants` 与技能同构：`package_name` 唯一、版本不可变、`manifest_json` 保存 `package.json`、`patch_files_json` 保存 patch 路径。实例表新增：
+
+```sql
+ALTER TABLE instances
+  ADD COLUMN skills_revision  VARCHAR(64) NULL,
+  ADD COLUMN plugins_revision VARCHAR(64) NULL,
+  ADD COLUMN needs_restart    TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN config_synced_at DATETIME(3) NULL;
 ```
 
 ## 3. Redis 键

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Star } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
@@ -19,6 +20,45 @@ const effectiveModel = ref<string | null>(null)
 const keyInput = ref('')
 const baseUrlInput = ref('')
 const modelInput = ref('')
+
+interface MySkill {
+  id: number
+  name: string
+  display_name: string
+  description: string
+  when_to_use: string
+  enabled: boolean
+}
+const mySkills = ref<MySkill[]>([])
+const skillsSaving = ref(false)
+const skillsLoaded = ref(false)
+
+async function loadSkills() {
+  try {
+    const data = await api.get<{ items: MySkill[] }>('/me/skills')
+    mySkills.value = data.items
+    skillsLoaded.value = true
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
+  }
+}
+
+async function saveSkills() {
+  skillsSaving.value = true
+  try {
+    const enabled_ids = mySkills.value.filter((item) => item.enabled).map((item) => item.id)
+    const data = await api.put<{ enabled: number; total: number }>('/me/skills', { enabled_ids })
+    ElMessage.success(`已应用：启用 ${data.enabled} / ${data.total} 个技能`)
+  } catch (error) {
+    ElMessage.error(errorMessage(error))
+  } finally {
+    skillsSaving.value = false
+  }
+}
+
+function setAllSkills(enabled: boolean) {
+  mySkills.value = mySkills.value.map((item) => ({ ...item, enabled }))
+}
 
 const profile = reactive({ display_name: '', email: '' })
 const password = reactive({ old_password: '', new_password: '', confirm: '' })
@@ -154,6 +194,7 @@ onMounted(() => {
   profile.display_name = auth.user?.display_name ?? ''
   profile.email = auth.user?.email ?? ''
   loadCredentials()
+  loadSkills()
 })
 </script>
 
@@ -162,7 +203,7 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h1>设置</h1>
-        <p>账号资料、登录密码与模型 API Key</p>
+        <p>账号资料、登录密码、模型 API Key 与技能偏好</p>
       </div>
     </div>
 
@@ -288,7 +329,110 @@ onMounted(() => {
             </el-form-item>
           </el-form>
         </el-tab-pane>
+
+        <el-tab-pane label="技能" name="skills">
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            title="管理员开放的技能默认全部启用；关闭后不会删除，可随时重新打开。"
+            description="保存后立即同步到你的实例并热重载，不需要重启。镜像自带技能与你自己放进 workspace 的技能不在此管理。"
+            style="margin-bottom: 18px"
+          />
+
+          <div v-if="skillsLoaded && mySkills.length === 0" class="blank">
+            <div class="blank-icon">
+              <el-icon><Star /></el-icon>
+            </div>
+            <strong>暂无可用技能</strong>
+            管理员开放技能后会出现在这里
+          </div>
+
+          <template v-else>
+            <div class="skills-toolbar">
+              <span class="muted" style="font-size: 13px">
+                已启用 {{ mySkills.filter((item) => item.enabled).length }} / {{ mySkills.length }}
+              </span>
+              <div>
+                <el-button size="small" @click="setAllSkills(true)">全部启用</el-button>
+                <el-button size="small" @click="setAllSkills(false)">全部关闭</el-button>
+              </div>
+            </div>
+
+            <ul class="skill-list">
+              <li v-for="skill in mySkills" :key="skill.id">
+                <el-checkbox v-model="skill.enabled" />
+                <div class="skill-copy">
+                  <strong>{{ skill.display_name || skill.name }}</strong>
+                  <p>{{ skill.description }}</p>
+                  <span v-if="skill.when_to_use" class="muted">
+                    适用：{{ skill.when_to_use }}
+                  </span>
+                </div>
+              </li>
+            </ul>
+
+            <div class="skills-save">
+              <el-button type="primary" :loading="skillsSaving" @click="saveSkills">
+                保存并应用
+              </el-button>
+            </div>
+          </template>
+        </el-tab-pane>
       </el-tabs>
     </div>
   </div>
 </template>
+
+<style scoped>
+.skills-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.skill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.skill-list li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper-soft);
+}
+
+.skill-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.skill-copy strong {
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.skill-copy p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.skill-copy .muted {
+  font-size: 11.5px;
+}
+
+.skills-save {
+  margin-top: 18px;
+}
+</style>

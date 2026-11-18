@@ -50,6 +50,39 @@ class CredentialIn(BaseModel):
     clear_key: bool = False
 
 
+class SkillCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    description: str = Field(min_length=1, max_length=500)
+    when_to_use: str = Field(default="", max_length=500)
+    model_invocable: bool = True
+    user_invocable: bool = True
+    body: str = Field(default="", max_length=200_000)
+
+
+class SkillUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    display_name: str | None = Field(default=None, max_length=128)
+    description: str = Field(min_length=1, max_length=500)
+    when_to_use: str = Field(default="", max_length=500)
+    model_invocable: bool = True
+    user_invocable: bool = True
+    body: str = Field(default="", max_length=200_000)
+    changelog: str = Field(default="", max_length=500)
+
+
+class SkillGrantIn(BaseModel):
+    grants: list[dict] = Field(default_factory=list)
+
+
+class SkillPrefsIn(BaseModel):
+    enabled_ids: list[int] = Field(default_factory=list)
+
+
+class PluginGrantIn(BaseModel):
+    grants: list[dict] = Field(default_factory=list)
+
+
 class UserCreateIn(BaseModel):
     username: str = Field(min_length=3, max_length=31)
     password: str = Field(min_length=8, max_length=200)

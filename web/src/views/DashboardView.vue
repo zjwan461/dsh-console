@@ -208,6 +208,14 @@ onUnmounted(() => store.stopPolling())
                 <span class="dot" />
                 {{ meta.text }}
               </span>
+              <el-tag
+                v-if="instance?.needs_restart"
+                type="warning"
+                size="small"
+                style="margin-left: 8px"
+              >
+                插件变更，待重启
+              </el-tag>
             </div>
             <div v-if="instance" class="instance-url mono">
               {{ instance.url }}

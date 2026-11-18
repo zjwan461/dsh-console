@@ -8,6 +8,7 @@
 ![vue](https://img.shields.io/badge/Vue-3-42b883)
 ![fastapi](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![docker](https://img.shields.io/badge/Docker-Engine-2496ed)
+![license](https://img.shields.io/badge/license-Apache%202.0-2f6f63)
 
 ![登录页](docs/images/login.jpg)
 
@@ -28,6 +29,12 @@
 | ![工作台](docs/images/dashboard.jpg) | ![版本管理](docs/images/versions.jpg) |
 | **实例运维**：强制启停、日志、Web 终端 | **用户与配额**：套餐、时长、重置密码 |
 | ![实例运维](docs/images/instances.jpg) | ![用户管理](docs/images/users.jpg) |
+| **技能仓库**：导入/在线编辑/发布/开放范围 | **插件目录**：兼容校验、按套餐分配 |
+| ![技能仓库](docs/images/skills.jpg) | ![插件目录](docs/images/plugins.jpg) |
+
+用户侧在「设置 → 技能」里默认全启用，可逐个关闭，保存即热重载：
+
+![用户技能开关](docs/images/user-skills.jpg)
 
 ### 从创建到终端（约 8 秒）
 
@@ -46,6 +53,8 @@
 | 快照与镜像 | 数据快照往返；容器 commit 成个人镜像；版本切换；保留策略 |
 | 版本治理 | 直接读 GHCR registry 元数据（不拉镜像）发现新构建，一键导入设默认；也支持 `docker save` tar 上传 |
 | 模型接入 | Key + Base URL + 模型名可配；非 DeepSeek 模型自动生成 `openai-completions` 提供方 |
+| 技能仓库 | 管理员导入 zip/tar/md、在线创建与编辑、版本回滚、按全员/套餐/用户开放；用户默认全启用、可关闭；物化到 `$DSH_HOME/skills` 热重载，镜像内置技能不受影响 |
+| 插件目录 | 管理员导入 DSH bundle、记录 DSH 兼容范围、按套餐/用户分配；以只读挂载追加到 `/opt/dsh-plugins`，变更标记待重启；用户只读、不能自选 |
 | 管理端 | 全站实例、强制操作、日志、真实 PTY Web 终端（xterm.js）、审计、公告、工单、邀请码 |
 | 无感升级 | 每次启动自动把库迁到代码期望的 `head`；多 worker 用数据库锁串行化 |
 | 部署 | 单机 Docker Compose；Caddy 动态路由；GHCR CI 出镜像；`app.cli doctor` 上线自检 |
@@ -71,12 +80,13 @@ flowchart LR
 - **Caddy** 是唯一入口与 TLS 终结者，路由由 API 通过 admin API 全量下发；
 - **console-api** 负责控制面（认证、实例、配额、Caddy 配置），挂载 `docker.sock`；
 - **console-worker** 负责数据面采样（计量、休眠、配额、节点指标、Caddy 日志）；
+- **技能**由 API 物化到实例的 `data/skills`（容器 `/data/dsh/skills`），DSH 热重载；**插件**以只读子路径挂载追加到 `/opt/dsh-plugins`，变更需重启容器；
 - 每个用户一个 **dsh 容器**，只加入 `dsh-edge` 网络，不发布端口。
 
 ## 交付状态
 
 - **功能**：M1–M5 已交付，并在真实 Docker / MySQL / Redis 上跑通端到端回归；此后补齐终端治理、启动迁移、模型端点、版本发现等生产化能力。
-- **验证**：单元测试 **56 条**（SQLite + fakeredis + FakeDriver + 假 registry）；真机回归脚本 `scripts/e2e_remote.py`、`e2e_terminal.py`、`e2e_registry.py`，结果与修掉的 bug 见 [路线图 §5](docs/06-roadmap.md)。
+- **验证**：单元测试 **68 条**（SQLite + fakeredis + FakeDriver + 假 registry）；技能/插件另有 Playwright 冒烟脚本 `scripts/ui_smoke_skills.py`；真机回归脚本 `scripts/e2e_remote.py`、`e2e_terminal.py`、`e2e_registry.py`，结果与修掉的 bug 见 [路线图 §5](docs/06-roadmap.md)。
 - **仓库卫生**：不含任何主机地址/口令；CI 的 `security.yml` 会扫描工作区与全部历史。
 
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。
@@ -237,3 +247,11 @@ dsh-console/
 - **镜像底座**：复用 `dsh-docker/Dockerfile` 构建的 `dsh:<version>`，一个版本一个镜像 tag；控制台只管理「已导入且启用」的版本。
 - **不修改 dsh 本体**：所有多租户能力都在外层（容器编排、反代、计量），升级 dsh 版本不需要改控制台代码。
 - **实例差异**：每个实例有独立的 `DSH_HOME`、workspace、子域名、`DSH_TRUSTED_HOSTS`；`login-gate` 插件在控制台模式下**关闭**（认证由控制台 + DSH token 承担，见 02 文档）。
+
+## 许可证
+
+本项目采用 **Apache License 2.0**，全文见 [`LICENSE`](LICENSE)。
+
+Copyright 2026 zjwan461
+
+你可以自由使用、修改、分发（包括商业用途），但需保留许可证与版权声明；分发修改后的版本时需说明改动。完整条款以 `LICENSE` 为准。

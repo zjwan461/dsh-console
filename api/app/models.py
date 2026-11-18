@@ -64,6 +64,23 @@ class CredentialScope(enum.StrEnum):
     user = "user"
 
 
+class SkillStatus(enum.StrEnum):
+    draft = "draft"
+    published = "published"
+    disabled = "disabled"
+
+
+class GrantScope(enum.StrEnum):
+    all = "all"
+    plan = "plan"
+    user = "user"
+
+
+class PluginStatus(enum.StrEnum):
+    enabled = "enabled"
+    disabled = "disabled"
+
+
 class ImageStatus(enum.StrEnum):
     importing = "importing"
     ready = "ready"
@@ -144,6 +161,12 @@ class Instance(Base):
     health: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     user_image_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    # Skill/plugin materialisation state: the hash of what was last written to
+    # the instance data directory, so reconcile can detect drift.
+    skills_revision: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plugins_revision: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    needs_restart: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    config_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -514,11 +537,147 @@ class TicketMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Skill(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    when_to_use: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    model_invocable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    user_invocable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[SkillStatus] = mapped_column(
+        enum_col(SkillStatus, "skill_status"), nullable=False, default=SkillStatus.draft, index=True
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="create")
+    current_revision_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SkillRevision(Base):
+    __tablename__ = "skill_revisions"
+    __table_args__ = (UniqueConstraint("skill_id", "rev", name="uk_skill_rev"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    skill_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rev: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manifest: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    changelog: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    created_by: Mapped[int | None] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SkillGrant(Base):
+    __tablename__ = "skill_grants"
+    __table_args__ = (UniqueConstraint("skill_id", "scope", "target_id", name="uk_skill_grant"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    skill_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    scope: Mapped[GrantScope] = mapped_column(
+        enum_col(GrantScope, "grant_scope"), nullable=False
+    )
+    target_id: Mapped[int] = mapped_column(BigInt, nullable=False, default=0)
+
+
+class UserSkillPref(Base):
+    __tablename__ = "user_skill_prefs"
+    __table_args__ = (UniqueConstraint("user_id", "skill_id", name="uk_user_skill"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    skill_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Plugin(Base):
+    __tablename__ = "plugins"
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    package_name: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    version: Mapped[str] = mapped_column(String(32), nullable=False, default="0.0.0")
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    dsh_versions: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    manifest: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[PluginStatus] = mapped_column(
+        enum_col(PluginStatus, "plugin_status"),
+        nullable=False,
+        default=PluginStatus.disabled,
+        index=True,
+    )
+    current_revision_id: Mapped[int | None] = mapped_column(BigInt, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class PluginRevision(Base):
+    __tablename__ = "plugin_revisions"
+    __table_args__ = (UniqueConstraint("plugin_id", "version", name="uk_plugin_rev"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    plugin_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("plugins.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manifest: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    patch_files: Mapped[object | None] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(
+        BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PluginGrant(Base):
+    __tablename__ = "plugin_grants"
+    __table_args__ = (UniqueConstraint("plugin_id", "scope", "target_id", name="uk_plugin_grant"),)
+
+    id: Mapped[int] = mapped_column(BigInt, primary_key=True, autoincrement=True)
+    plugin_id: Mapped[int] = mapped_column(
+        BigInt, ForeignKey("plugins.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    scope: Mapped[GrantScope] = mapped_column(
+        enum_col(GrantScope, "plugin_grant_scope"), nullable=False
+    )
+    target_id: Mapped[int] = mapped_column(BigInt, nullable=False, default=0)
+
+
 __all__ = [
     "Announcement",
     "AuditLog",
     "CredentialScope",
     "DshImage",
+    "GrantScope",
     "ImageStatus",
     "Instance",
     "InstanceEvent",
@@ -527,10 +686,18 @@ __all__ = [
     "LedgerReason",
     "NodeMetric",
     "Plan",
+    "Plugin",
+    "PluginGrant",
+    "PluginRevision",
+    "PluginStatus",
     "ProviderCredential",
     "QuotaLedger",
     "Role",
     "Setting",
+    "Skill",
+    "SkillGrant",
+    "SkillRevision",
+    "SkillStatus",
     "Snapshot",
     "SnapshotStatus",
     "Ticket",
@@ -541,5 +708,6 @@ __all__ = [
     "UserImageStatus",
     "UserQuota",
     "UserSession",
+    "UserSkillPref",
     "UserStatus",
 ]
