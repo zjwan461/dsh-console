@@ -258,7 +258,7 @@ plugin_assignments（可选视图，也可实时计算）
 
 entrypoint 在容器启动时只为**新出现的插件**播种 patch，且从不删除。控制台在禁用插件时：
 
-- 先删 `<data_path>/plugins/<flat>`，下一次 `_spec()` 不再带这条挂载；
+- 先删 patch 块并让 `_spec()` 不再带这条挂载；**目录本身推迟到容器重建后回收**（运行中的容器可能还挂着它，直接删会 EBUSY 或抽走正在使用的文件）；
 - 同时从 `$DSH_HOME/cordis.patch.yml` 删除该插件的 `# bundled plugin: <name>` 块；
 - 只删平台插件表里存在的包名，镜像内置插件的块不动；
 - 删块后实例标记 `needs_restart`，重启即可正常启动（不会 `plugin tree failed to load`）。

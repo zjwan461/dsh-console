@@ -389,6 +389,16 @@ def sync_instance_plugins(db: Session, instance: Instance) -> dict:
         if entry.name.startswith("."):
             continue
         if entry.name not in keep:
+            # A running container may still hold a bind mount on this directory.
+            # Removing it can fail (or pull files out from under a live plugin),
+            # so defer the delete until the next start, after the container is
+            # recreated without the mount.
+            if instance.status in (
+                InstanceStatus.running,
+                InstanceStatus.starting,
+                InstanceStatus.waking,
+            ):
+                continue
             shutil.rmtree(entry, ignore_errors=True)
             (root / f".{entry.name}.checksum").unlink(missing_ok=True)
             changed = True
@@ -416,6 +426,25 @@ def sync_instance_plugins(db: Session, instance: Instance) -> dict:
     instance.plugins_revision = desired_hash
     db.commit()
     return {"changed": changed, "plugins": sorted(keep), "needs_restart": instance.needs_restart}
+
+
+def cleanup_stale_plugin_dirs(db: Session, instance: Instance) -> int:
+    """Reclaim directories after the container was recreated without the mount."""
+    user = db.get(User, instance.user_id)
+    if user is None:
+        return 0
+    keep = {flat_dir_name(plugin.package_name) for plugin, _ in assigned_plugins(db, user)}
+    root = instance_plugin_dir(instance)
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for entry in list(root.iterdir()):
+        if entry.name.startswith(".") or entry.name in keep:
+            continue
+        shutil.rmtree(entry, ignore_errors=True)
+        (root / f".{entry.name}.checksum").unlink(missing_ok=True)
+        removed += 1
+    return removed
 
 
 def plugin_mounts(db: Session, instance: Instance) -> list[tuple[str, str, bool]]:

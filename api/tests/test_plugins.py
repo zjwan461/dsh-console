@@ -181,10 +181,19 @@ def test_disable_removes_patch_block_and_directory(client: TestClient):
     assert os.path.isdir(folder)
 
     client.post(f"/api/v1/admin/plugins/{plugin['id']}/disable", headers={"X-CSRF-Token": csrf})
-    assert not os.path.exists(folder)
     text = open(patch_path, encoding="utf-8").read()
     assert "@local/demo-plugin" not in text
     assert "bundled plugins" in text or text.strip() == ""
+
+    # The directory is kept while the old container still mounts it; a restart
+    # recreates the container without the mount and then reclaims the directory.
+    assert os.path.isdir(folder)
+    user_csrf = _login(client, "plugindisableuser", "pluginpass123")
+    restarted = client.post(
+        "/api/v1/instances/me/restart", json={}, headers={"X-CSRF-Token": user_csrf}
+    )
+    assert restarted.status_code in (200, 202), restarted.text
+    assert not os.path.exists(folder)
 
 
 def test_plugin_patch_removal_keeps_other_blocks():

@@ -464,6 +464,7 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
         previous = instance.status
         instance.status = InstanceStatus.running
         instance.needs_restart = False
+        plugin_repo.cleanup_stale_plugin_dirs(db, instance)
         instance.health = "healthy"
         instance.error = None
         instance.status_reason = None
@@ -538,6 +539,7 @@ def start_instance(
             raise RuntimeError("container exited during startup")
         instance.status = InstanceStatus.running
         instance.needs_restart = False
+        plugin_repo.cleanup_stale_plugin_dirs(db, instance)
         instance.health = "healthy"
         instance.error = None
         instance.last_started_at = info.started_at or utcnow()
@@ -674,6 +676,7 @@ def restart_instance(
         info = driver.wait_healthy(instance.container_id)
         instance.status = InstanceStatus.running
         instance.needs_restart = False
+        plugin_repo.cleanup_stale_plugin_dirs(db, instance)
         instance.health = "healthy"
         instance.error = None
         instance.last_started_at = info.started_at or utcnow()
