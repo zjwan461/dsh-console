@@ -273,6 +273,29 @@ def test_published_edit_hot_updates_instance(client: TestClient):
     assert "第二版内容" in open(target, encoding="utf-8").read()
 
 
+def test_admin_disable_removes_skill_from_instances(client: TestClient):
+    admin_csrf = _admin(client)
+    skill = _create_skill(client, admin_csrf, "disable-me")
+    _grant_all(client, admin_csrf, skill["id"])
+    _publish(client, admin_csrf, skill["id"])
+
+    user_csrf = _ensure_user(client, "skilldisableuser")
+    client.post("/api/v1/instances/me", json={}, headers={"X-CSRF-Token": user_csrf})
+    instance = _instance_for("skilldisableuser")
+    target = os.path.join(instance.data_path, "skills", "disable-me")
+    assert os.path.isdir(target)
+
+    admin_csrf = _admin(client)
+    disabled = client.delete(
+        f"/api/v1/admin/skills/{skill['id']}", headers={"X-CSRF-Token": admin_csrf}
+    )
+    assert disabled.status_code == 204, disabled.text
+    assert not os.path.exists(target)
+    _login(client, "skilldisableuser", "skillpass123")
+    mine = client.get("/api/v1/me/skills").json()["data"]
+    assert "disable-me" not in [item["name"] for item in mine["items"]]
+
+
 def test_plan_grant_filters_users(client: TestClient):
     admin_csrf = _admin(client)
     skill = _create_skill(client, admin_csrf, "plan-only")
