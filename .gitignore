@@ -33,3 +33,4 @@ scripts/.remote.env
 .idea/
 .vscode/
 *.log
+*.egg-info
