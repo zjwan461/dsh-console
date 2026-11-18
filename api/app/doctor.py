@@ -129,20 +129,21 @@ def check_database() -> list[Check]:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
             users = db.query(User).count()
-            try:
-                revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            except Exception:  # noqa: BLE001 - the table only exists after a migration
-                revision = None
     except Exception as exc:  # noqa: BLE001
         return [Check(FAIL, "数据库", f"{type(exc).__name__}: {exc}"[:240])]
-    return [
-        Check(PASS, "数据库", f"{users} 个用户"),
-        Check(
-            PASS if revision else WARN,
-            "迁移版本",
-            str(revision) if revision else "未找到 alembic_version（ENV=dev 用 create_all 时正常）",
-        ),
-    ]
+    from .migrations import schema_summary
+
+    summary = schema_summary()
+    current, head = summary.get("current"), summary.get("head")
+    if summary.get("error"):
+        schema = Check(FAIL, "迁移版本", str(summary["error"])[:240])
+    elif current is None:
+        schema = Check(WARN, "迁移版本", "尚无 alembic_version（启动时会自动建库到 head）")
+    elif current != head:
+        schema = Check(FAIL, "迁移版本", f"当前 {current}，应为 {head}：启动日志里找 dsh.migrate")
+    else:
+        schema = Check(PASS, "迁移版本", f"{current}（已是最新）")
+    return [Check(PASS, "数据库", f"{users} 个用户"), schema]
 
 
 def check_redis() -> list[Check]:

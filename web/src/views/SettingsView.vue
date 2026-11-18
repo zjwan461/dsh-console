@@ -15,8 +15,10 @@ const platformConfigured = ref(false)
 const platformBaseUrl = ref<string | null>(null)
 const userBaseUrl = ref<string | null>(null)
 const effectiveBaseUrl = ref<string | null>(null)
+const effectiveModel = ref<string | null>(null)
 const keyInput = ref('')
 const baseUrlInput = ref('')
+const modelInput = ref('')
 
 const profile = reactive({ display_name: '', email: '' })
 const password = reactive({ old_password: '', new_password: '', confirm: '' })
@@ -26,8 +28,14 @@ async function loadCredentials() {
     const data = await api.get<{
       platform_key_configured: boolean
       platform_base_url: string | null
-      user_key: { configured: boolean; hint: string; base_url: string | null }
+      user_key: {
+        configured: boolean
+        hint: string
+        base_url: string | null
+        model: string | null
+      }
       effective_base_url: string | null
+      effective_model: string | null
     }>('/me/credentials')
     platformConfigured.value = data.platform_key_configured
     platformBaseUrl.value = data.platform_base_url
@@ -35,7 +43,9 @@ async function loadCredentials() {
     keyHint.value = data.user_key.hint
     userBaseUrl.value = data.user_key.base_url
     effectiveBaseUrl.value = data.effective_base_url
+    effectiveModel.value = data.effective_model
     baseUrlInput.value = data.user_key.base_url ?? ''
+    modelInput.value = data.user_key.model ?? ''
   } catch (error) {
     ElMessage.error(errorMessage(error))
   }
@@ -90,11 +100,13 @@ async function saveKey() {
       configured: boolean
       hint: string
       base_url: string | null
+      model: string | null
     }>('/me/credentials', {
       api_key: keyInput.value,
-      // Always send the endpoint: an empty string means "official default", not
+      // Always send the endpoint and model: empty means "official default", not
       // "leave it alone", which is what the restore button relies on.
       base_url: baseUrlInput.value,
+      model: modelInput.value,
     })
     keyConfigured.value = result.configured
     keyHint.value = result.hint
@@ -122,6 +134,7 @@ async function clearKey() {
     await api.put('/me/credentials', { clear_key: true })
     keyInput.value = ''
     baseUrlInput.value = ''
+    modelInput.value = ''
     ElMessage.success('已清除，将使用平台 Key')
     await loadCredentials()
   } catch (error) {
@@ -133,6 +146,7 @@ async function clearKey() {
 
 function restoreOfficial() {
   baseUrlInput.value = ''
+  modelInput.value = ''
   saveKey()
 }
 
@@ -222,6 +236,9 @@ onMounted(() => {
               <span class="mono" style="font-size: 12.5px">
                 {{ effectiveBaseUrl || 'https://api.deepseek.com（官方，默认）' }}
               </span>
+              <span v-if="effectiveModel" class="muted" style="margin-left: 10px; font-size: 12px">
+                模型 {{ effectiveModel }}
+              </span>
             </el-form-item>
             <el-form-item label="设置 Key">
               <el-input
@@ -238,9 +255,22 @@ onMounted(() => {
               />
               <div class="muted" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
                 兼容 OpenAI 协议的网关（LiteLLM / vLLM / 中转）填到
-                <span class="mono">/v1</span> 即可；保存后会写入实例的
-                <span class="mono">settings.yaml</span> 的
-                <span class="mono">llm-deepseek.baseURL</span>。
+                <span class="mono">/v1</span> 即可；只填地址时写入
+                <span class="mono">llm-deepseek.baseURL</span>，沿用 DeepSeek 的模型目录。
+              </div>
+            </el-form-item>
+            <el-form-item label="模型名">
+              <el-input
+                v-model="modelInput"
+                placeholder="例如 qwen2.5-32b-instruct（留空 = 用 DeepSeek 默认模型）"
+              />
+              <div class="muted" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
+                网关上的模型 id 不是 DeepSeek 系列时必填。填了会生成一个
+                <span class="mono">openai-completions</span> 提供方并设为新会话默认模型；
+                <span class="mono">contextWindow</span> 默认 128k、<span class="mono"
+                  >maxTokens</span
+                >
+                默认 8k，可在 DSH 设置页微调。
               </div>
             </el-form-item>
             <el-form-item>

@@ -227,6 +227,81 @@ def test_changing_endpoint_recreates_container_on_restart(client: TestClient):
     assert data["llm-deepseek"]["baseURL"] == "https://two.example.com/v1"
 
 
+def test_model_name_generates_generic_provider(client: TestClient):
+    """A non-DeepSeek model needs an openai-completions provider, not just a URL."""
+    csrf = _ensure_user(client, "modeluser")
+    put = client.put(
+        "/api/v1/me/credentials",
+        json={
+            "api_key": "sk-model-12345678",
+            "base_url": "https://gateway.example.com/v1",
+            "model": "qwen2.5-32b-instruct",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["data"]["model"] == "qwen2.5-32b-instruct"
+
+    created = client.post("/api/v1/instances/me", json={}, headers={"X-CSRF-Token": csrf})
+    assert created.status_code == 202, created.text
+    instance = _instance_for("modeluser")
+    data = yaml.safe_load(open(os.path.join(instance.data_path, "settings.yaml"), encoding="utf-8"))
+    provider = data["llm-pi-ai"]["providers"]["console-gateway"]
+    assert provider["api"] == "openai-completions"
+    assert provider["baseURL"] == "https://gateway.example.com/v1"
+    assert provider["apiKeyEnv"] == "DEEPSEEK_API_KEY"
+    assert provider["models"][0]["id"] == "qwen2.5-32b-instruct"
+    assert data["agent-default-model"] == {
+        "provider": "console-gateway",
+        "model": "qwen2.5-32b-instruct",
+    }
+
+    # Clearing the model turns the override off but keeps the custom endpoint.
+    cleared = client.put(
+        "/api/v1/me/credentials",
+        json={"model": ""},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["model"] is None
+    client.post("/api/v1/instances/me/restart", json={}, headers={"X-CSRF-Token": csrf})
+    data = yaml.safe_load(open(os.path.join(instance.data_path, "settings.yaml"), encoding="utf-8"))
+    assert "console-gateway" not in data.get("llm-pi-ai", {}).get("providers", {})
+    assert "agent-default-model" not in data
+    assert data["llm-deepseek"]["baseURL"] == "https://gateway.example.com/v1"
+
+
+def test_invalid_model_is_rejected(client: TestClient):
+    csrf = _ensure_user(client, "badmodel")
+    response = client.put(
+        "/api/v1/me/credentials",
+        json={
+            "api_key": "sk-bad-12345678",
+            "base_url": "https://x.example.com/v1",
+            "model": "bad model!",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 422
+
+
+def test_changing_model_recreates_container(client: TestClient):
+    csrf = _ensure_user(client, "modelrecreate")
+    base = {"api_key": "sk-model-12345678", "base_url": "https://gw.example.com/v1"}
+    client.put(
+        "/api/v1/me/credentials",
+        json={**base, "model": "model-a"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    client.post("/api/v1/instances/me", json={}, headers={"X-CSRF-Token": csrf})
+    first = _instance_for("modelrecreate").container_id
+
+    client.put("/api/v1/me/credentials", json={"model": "model-b"}, headers={"X-CSRF-Token": csrf})
+    client.post("/api/v1/instances/me/restart", json={}, headers={"X-CSRF-Token": csrf})
+    second = _instance_for("modelrecreate").container_id
+    assert first and second and first != second
+
+
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     """FakeDriver is instant; keep the test runtime independent of real polling."""

@@ -172,9 +172,11 @@ def get_credentials(
         {
             "platform_key_configured": platform is not None,
             "platform_base_url": platform.base_url if platform else None,
+            "platform_model": platform.model if platform else None,
             "user_key": provider.view(own),
             "effective": "user" if own else ("platform" if platform else "none"),
             "effective_base_url": (own or platform).base_url if (own or platform) else None,
+            "effective_model": (own or platform).model if (own or platform) else None,
         },
     )
 
@@ -193,6 +195,7 @@ def put_credentials(
         user_id=user.id,
         api_key=payload.api_key,
         base_url=payload.base_url,
+        model=payload.model,
         actor_id=user.id,
         clear_key=payload.clear_key,
     )
@@ -207,6 +210,7 @@ def put_credentials(
             "cleared": cleared,
             "key_changed": bool((payload.api_key or "").strip()),
             "base_url": record.base_url if record else None,
+            "model": record.model if record else None,
         },
     )
     db.commit()

@@ -161,37 +161,48 @@ HTTP 状态码语义：`200` 成功、`201` 创建、`202` 已入队（异步）
 { "data": {
   "platform_key_configured": true,
   "platform_base_url": "https://gateway.example.com/v1",
+  "platform_model": "qwen2.5-32b-instruct",
   "user_key": { "configured": true, "hint": "…abcd",
-                "base_url": "https://api.deepseek.com/v1", "updated_at": "..." },
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "qwen2.5-32b-instruct", "updated_at": "..." },
   "effective": "user",
-  "effective_base_url": "https://api.deepseek.com/v1"
+  "effective_base_url": "https://api.deepseek.com/v1",
+  "effective_model": "qwen2.5-32b-instruct"
 }}
 ```
 
-`base_url` 为 `null` 表示官方默认地址。`effective*` 是「用户自身优先、否则平台」的结果。
+`base_url` / `model` 为 `null` 表示官方默认地址与官方模型目录。`effective*` 是「用户自身优先、否则平台」的结果。
 
 ### PUT `/me/credentials`
 
 ```json
-{ "api_key": "sk-...", "base_url": "https://gateway.example.com/v1" }
+{ "api_key": "sk-...", "base_url": "https://gateway.example.com/v1",
+  "model": "qwen2.5-32b-instruct" }
 ```
 
-语义（`api_key` / `base_url` 均可省略）：
+语义（字段均可省略）：
 
 | 请求 | 行为 |
 |---|---|
-| `api_key` 非空 | 保存/替换 Key，并按需写入 `base_url` |
-| `api_key` 空、`base_url` 非空 | 只改地址，保留已有 Key |
-| `base_url` 为 `""` | 地址恢复官方默认，Key 不变 |
+| `api_key` 非空 | 保存/替换 Key，并按需写入 `base_url` / `model` |
+| `api_key` 空、`base_url`/`model` 非空 | 只改地址与模型，保留已有 Key |
+| `base_url` / `model` 为 `""` | 恢复官方默认，Key 不变 |
 | `clear_key: true` | 删除整条凭据，回退平台 Key |
-| `api_key: ""` 且未传 `base_url` | 兼容旧客户端的「清除」语义 |
+| `api_key: ""` 且未传任何字段 | 兼容旧客户端的「清除」语义 |
 
 `base_url` 必须是 `http(s)://` 完整地址，不能带查询参数；末尾 `/` 会被去掉。
+`model` 只允许 `[A-Za-z0-9._:/-]`，最多 100 字符。
 `200` 返回与 GET 相同的 `user_key` 结构，**不回显明文**；响应头 `X-Needs-Restart: true`。
 
-生效方式：Key 注入容器环境变量（创建时固定），地址写入实例的
-`DATA_ROOT/instances/<uid>/data/settings.yaml` 的 `llm-deepseek.baseURL`。
-重启实例时若配置哈希变化，控制台会**重建容器**（而不是复用旧环境）。
+生效方式：Key 注入容器环境变量（创建时固定）。端点/模型写入实例的
+`DATA_ROOT/instances/<uid>/data/settings.yaml`：
+
+- 只填地址 → `llm-deepseek.baseURL`，沿用 DeepSeek 模型目录；
+- 地址 + 模型名 → 生成 `llm-pi-ai.providers.console-gateway`（`openai-completions`）
+  并设置 `agent-default-model`，从而支持 qwen / gpt 等非 DeepSeek 模型。
+
+重启实例时若配置哈希（环境 + 地址 + 模型 + 镜像/规格）变化，控制台会**重建容器**
+（而不是复用旧环境）。
 
 ## 4. 实例（每人一个）
 

@@ -41,6 +41,11 @@ async def daily(name: str, fn) -> None:
 
 
 async def main() -> None:
+    # A worker can be started on its own (`python -m app.worker`); make sure it
+    # never runs against a schema older than the code.
+    from .migrations import ensure_schema
+
+    await asyncio.to_thread(ensure_schema)
     log.info(
         "worker starting: stats=%ss flush=%ss idle=%ss",
         settings.stats_interval_seconds,

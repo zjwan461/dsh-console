@@ -317,6 +317,9 @@ class ProviderCredential(Base):
     # Optional OpenAI-compatible endpoint (LiteLLM / vLLM / a proxy). Empty means
     # the provider's official host, i.e. no baseURL is written into settings.yaml.
     base_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Optional model id. When set, the console configures a generic
+    # openai-completions provider instead of relying on the DeepSeek catalogue.
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_by: Mapped[int | None] = mapped_column(
         BigInt, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

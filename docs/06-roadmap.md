@@ -222,6 +222,8 @@ docker pull 到入库 144s，页面状态变为「已导入」
 - [x] **管理员终端治理**：`admin_terminal_enabled` 真正生效（此前只是个设置项）；每次开/关都写审计（操作者、实例、IP、UA、时长、字节数、关闭原因）；`TERMINAL_IDLE_SECONDS` 空闲自动断开；前端按 `/system/info.features.terminal` 置灰入口。
 - [x] **上线前自检 `app.cli doctor`**：数据库/迁移版本/Redis/Docker/实例网络/默认镜像/数据目录/密钥强度/Caddy 一次跑完，`FAIL` 退出码 1，可直接做部署门禁。
 - [x] **容量探测降级**：Docker 不可用时监控页不再 500，返回 `docker_ok=false` 并拒绝新建实例（503 `DOCKER_UNAVAILABLE`）。
+- [x] **启动自动迁移**：`ensure_schema()` 每次启动把库收敛到 head（dev/prod 同一套），MySQL 用 `GET_LOCK` 串行化多 worker；worker 启动也检查。新增迁移不再需要手工执行。
+- [x] **模型端点可配**：Key 可绑定 Base URL 与模型名；非 DeepSeek 模型生成 `openai-completions` 提供方，重启按配置哈希重建容器。
 - [ ] 备份/恢复演练（mysqldump + data + Caddy 证书）
 - [ ] 故障演练：杀 Caddy / worker / MySQL、磁盘写满、单实例 OOM
 - [ ] 压测与 inotify 上限

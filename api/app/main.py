@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from .config import settings
-from .db import Base, SessionLocal, engine
+from .db import SessionLocal
 from .errors import ApiError, api_error_handler, error_body, unhandled_error_handler
 from .models import User  # noqa: F401  (registers metadata)
 from .redis import redis_ok
@@ -51,8 +51,11 @@ async def lifespan(app: FastAPI):
     import os
 
     os.makedirs(settings.data_root, exist_ok=True)
-    if settings.is_dev or settings.env == "sqlite":
-        Base.metadata.create_all(engine)
+    # Always converge the schema before touching any table: this is what makes
+    # in-place upgrades "just work" in dev and prod alike.
+    from .migrations import ensure_schema
+
+    ensure_schema()
     with SessionLocal() as db:
         try:
             seed_all(db)

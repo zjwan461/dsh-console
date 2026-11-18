@@ -12,6 +12,8 @@ const platformHint = ref('')
 const platformKey = ref('')
 const platformBaseUrl = ref<string | null>(null)
 const platformBaseUrlInput = ref('')
+const platformModel = ref<string | null>(null)
+const platformModelInput = ref('')
 const form = reactive<Settings>({
   base_domain: 'dsh.example.com',
   console_name: '优墨云舱',
@@ -36,11 +38,14 @@ async function load() {
       configured: boolean
       hint: string
       base_url: string | null
+      model: string | null
     }>('/admin/credentials/platform')
     platformConfigured.value = cred.configured
     platformHint.value = cred.hint
     platformBaseUrl.value = cred.base_url
     platformBaseUrlInput.value = cred.base_url ?? ''
+    platformModel.value = cred.model
+    platformModelInput.value = cred.model ?? ''
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -83,14 +88,18 @@ async function savePlatformKey() {
       configured: boolean
       hint: string
       base_url: string | null
+      model: string | null
     }>('/admin/credentials/platform', {
       api_key: platformKey.value,
       base_url: platformBaseUrlInput.value,
+      model: platformModelInput.value,
     })
     platformConfigured.value = result.configured
     platformHint.value = result.hint
     platformBaseUrl.value = result.base_url
     platformBaseUrlInput.value = result.base_url ?? ''
+    platformModel.value = result.model
+    platformModelInput.value = result.model ?? ''
     platformKey.value = ''
     ElMessage.success(result.configured ? '平台 Key 已保存' : '平台 Key 已清除')
   } catch (error) {
@@ -117,6 +126,8 @@ async function clearPlatformKey() {
     platformHint.value = ''
     platformBaseUrl.value = null
     platformBaseUrlInput.value = ''
+    platformModel.value = null
+    platformModelInput.value = ''
     platformKey.value = ''
     ElMessage.success('平台 Key 已清除')
   } catch (error) {
@@ -197,6 +208,7 @@ onMounted(load)
           </el-tag>
           <span class="muted" style="margin-left: 10px; font-size: 12px">
             {{ platformBaseUrl || '官方地址' }}
+            <template v-if="platformModel"> · 模型 {{ platformModel }}</template>
           </span>
         </el-form-item>
         <el-form-item label="设置 Key">
@@ -215,6 +227,16 @@ onMounted(load)
           <div class="muted" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
             用户没有自填地址时使用这个端点。兼容 OpenAI 协议的网关（LiteLLM / vLLM / 中转）填到
             <span class="mono">/v1</span>；会写入各实例的 <span class="mono">settings.yaml</span>。
+          </div>
+        </el-form-item>
+        <el-form-item label="模型名">
+          <el-input
+            v-model="platformModelInput"
+            placeholder="例如 qwen2.5-32b-instruct（留空 = DeepSeek 默认模型）"
+          />
+          <div class="muted" style="font-size: 12px; line-height: 1.6; margin-top: 4px">
+            非 DeepSeek 模型 id 时必填。填了会为实例生成
+            <span class="mono">openai-completions</span> 提供方并设为默认模型。
           </div>
         </el-form-item>
         <el-form-item>

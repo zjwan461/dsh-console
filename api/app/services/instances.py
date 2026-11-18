@@ -84,7 +84,7 @@ def _ensure_dirs(instance: Instance) -> None:
                 pass
 
 
-def _effective_credential(db: Session, user_id: int) -> tuple[str | None, str | None]:
+def _effective_credential(db: Session, user_id: int) -> tuple[str | None, str | None, str | None]:
     from . import provider
 
     return provider.effective(db, user_id)
@@ -104,28 +104,39 @@ def _env(instance: Instance, db: Session) -> dict[str, str]:
         "NO_PROXY": "127.0.0.1,localhost,172.16.0.0/12",
         "no_proxy": "127.0.0.1,localhost,172.16.0.0/12",
     }
-    key, _ = _effective_credential(db, instance.user_id)
+    key, _, _ = _effective_credential(db, instance.user_id)
     if key:
         env["DEEPSEEK_API_KEY"] = key
     return env
 
 
-def _write_model_settings(instance: Instance, db: Session) -> None:
-    """Point the instance's `llm-deepseek` adapter at the user's endpoint.
+# Provider id we own inside the instance's settings.yaml. Prefixed so it cannot
+# collide with something the user configured in the DSH web UI.
+CONSOLE_PROVIDER_ID = "console-gateway"
 
-    DSH reads `$DSH_HOME/settings.yaml`; the endpoint lives there as
-    `llm-deepseek.baseURL` (the key itself stays in the environment). The file is
-    merged, never replaced: users may have configured other providers from the DSH
-    web UI, and an unparseable file is left untouched rather than clobbered.
+
+def _write_model_settings(instance: Instance, db: Session) -> None:
+    """Write the user's endpoint (and optional model) into `settings.yaml`.
+
+    Two shapes, matching what DSH itself documents:
+
+    * endpoint only  -> `llm-deepseek.baseURL` (DeepSeek-compatible gateway,
+                        model catalogue unchanged)
+    * endpoint+model -> a generic `llm-pi-ai` provider (openai-completions) plus
+                        `agent-default-model`, so a gateway exposing qwen/gpt
+                        models actually works
+
+    The file is merged, never replaced: users may have configured other providers
+    from the DSH web UI, and an unparseable file is left untouched.
     """
     import tempfile
 
     import yaml
 
-    _, base_url = _effective_credential(db, instance.user_id)
+    _, base_url, model = _effective_credential(db, instance.user_id)
     path = os.path.join(instance.data_path, "settings.yaml")
     exists = os.path.exists(path)
-    if not base_url and not exists:
+    if not base_url and not model and not exists:
         return
 
     data: dict = {}
@@ -138,18 +149,61 @@ def _write_model_settings(instance: Instance, db: Session) -> None:
             log.warning("cannot read %s, leaving it untouched: %s", path, exc)
             return
 
-    section = data.get("llm-deepseek")
-    if not isinstance(section, dict):
-        section = {}
+    deepseek = data.get("llm-deepseek")
+    if not isinstance(deepseek, dict):
+        deepseek = {}
+    pi = data.get("llm-pi-ai")
+    if not isinstance(pi, dict):
+        pi = {}
+    providers = pi.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+
     if base_url:
-        section["baseURL"] = base_url
+        # Keep the DeepSeek adapter pointed at the same gateway as well.
+        deepseek["baseURL"] = base_url
     else:
-        section.pop("baseURL", None)
-    if section:
-        data["llm-deepseek"] = section
+        deepseek.pop("baseURL", None)
+
+    if base_url and model:
+        providers[CONSOLE_PROVIDER_ID] = {
+            "displayName": "Console gateway",
+            "api": "openai-completions",
+            "baseURL": base_url,
+            "apiKeyEnv": "DEEPSEEK_API_KEY",
+            "models": [
+                {
+                    "id": model,
+                    "name": model,
+                    # Conservative defaults; users who need exact limits can edit
+                    # settings.yaml in the DSH UI.
+                    "contextWindow": 128000,
+                    "maxTokens": 8192,
+                }
+            ],
+        }
+        data["agent-default-model"] = {"provider": CONSOLE_PROVIDER_ID, "model": model}
+    else:
+        if providers.pop(CONSOLE_PROVIDER_ID, None) is not None and not providers:
+            pi.pop("providers", None)
+        default = data.get("agent-default-model")
+        if isinstance(default, dict) and default.get("provider") == CONSOLE_PROVIDER_ID:
+            data.pop("agent-default-model", None)
+
+    if providers:
+        pi["providers"] = providers
+        data["llm-pi-ai"] = pi
+    elif not pi:
+        data.pop("llm-pi-ai", None)
+    else:
+        data["llm-pi-ai"] = pi
+
+    if deepseek:
+        data["llm-deepseek"] = deepseek
     else:
         data.pop("llm-deepseek", None)
-    if not data and not base_url:
+
+    if not data and not base_url and not model:
         return
 
     os.makedirs(instance.data_path, mode=0o700, exist_ok=True)
@@ -168,7 +222,7 @@ def _write_model_settings(instance: Instance, db: Session) -> None:
             os.remove(tmp)
 
 
-def _config_hash(spec: ContainerSpec, base_url: str | None = None) -> str:
+def _config_hash(spec: ContainerSpec, base_url: str | None = None, model: str | None = None) -> str:
     """Identity of everything that requires re-creating (not just restarting) a container."""
     import hashlib
     import json
@@ -182,10 +236,11 @@ def _config_hash(spec: ContainerSpec, base_url: str | None = None) -> str:
         "shm": spec.shm_mb,
         "pids": spec.pids_limit,
         "user": spec.user,
-        # The endpoint lives in settings.yaml rather than the env. It is hashed so
-        # one restart applies both a key and an endpoint change consistently,
+        # The endpoint/model live in settings.yaml rather than the env. They are
+        # hashed so one restart applies key + endpoint + model consistently,
         # instead of depending on whether DSH happened to hot-reload the file.
         "base_url": base_url or "",
+        "model": model or "",
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -244,8 +299,8 @@ def _spec(instance: Instance, image: DshImage, db: Session) -> ContainerSpec:
     )
     # Lets a later start/restart detect that the *effective* config changed (key,
     # base URL, image...) and re-create the container instead of reusing stale env.
-    _, base_url = _effective_credential(db, instance.user_id)
-    spec.labels["dsh.console.config_hash"] = _config_hash(spec, base_url)
+    _, base_url, model = _effective_credential(db, instance.user_id)
+    spec.labels["dsh.console.config_hash"] = _config_hash(spec, base_url, model)
     return spec
 
 

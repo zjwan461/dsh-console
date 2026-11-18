@@ -36,6 +36,9 @@ def main() -> None:
         page.get_by_placeholder("https://api.deepseek.com/v1（留空 = 官方地址）").fill(
             "https://gateway.example.com/v1"
         )
+        page.get_by_placeholder(
+            "例如 qwen2.5-32b-instruct（留空 = 用 DeepSeek 默认模型）"
+        ).fill("qwen2.5-32b-instruct")
         page.get_by_placeholder("sk-...（留空则沿用已保存的 Key）").fill("sk-demo-1234567890")
         page.get_by_role("button", name="保存", exact=True).click()
         page.wait_for_timeout(1200)

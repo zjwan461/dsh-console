@@ -122,12 +122,19 @@ docker compose up -d --build
 docker compose logs -f console-api     # 等 alembic upgrade head 完成、/readyz 200
 ```
 
-首次启动自动：
+**每次启动**（dev / prod 相同）自动：
 
-1. 建表（Alembic，含 `dsh_images` / `instances` / `instance_events`）；
+1. **把数据库迁移到 `head`**：`app.migrations.ensure_schema()` 先读 `alembic_version`，落后才执行 upgrade；空库直接按迁移链建表（不再用 `create_all`）。MySQL 用 `GET_LOCK` 串行化多 worker，避免并发迁移；
 2. 种子套餐与默认设置；
 3. 若 `users` 为空，用 `BOOTSTRAP_ADMIN_*` 建管理员；
 4. 创建 `dsh-edge` 网络，并向 Caddy 下发全量配置（console + 已有实例路由）。
+
+所以升级就是 `docker compose pull && docker compose up -d`：镜像换了，启动时自动补齐 schema。
+`console-worker` 启动时也会做同样的检查，单独跑 worker 也不会用到旧表结构。
+
+> 历史遗留的 dev 库（有表但没有 `alembic_version`，早期 `create_all` 建的）会补建缺失表并
+> `stamp head`；迁移新增的**列**不会自动补，遇到缺列直接删掉 `dev.db` 重建即可。
+> 启动日志里的 logger 是 `dsh.migrate`，`doctor` 的「迁移版本」也会给出当前/应为的 revision。
 
 ### 3.3 上线前自检：`app.cli doctor`
 

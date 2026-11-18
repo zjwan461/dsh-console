@@ -7,6 +7,7 @@ is useless, and keeping them apart produces ambiguous "which one is active" UI.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from ..security import encrypt_secret, mask_key, utcnow
 
 PROVIDER = "deepseek"
 MAX_BASE_URL = 500
+MAX_MODEL = 100
+MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
 
 
 def normalize_base_url(raw: str | None) -> str | None:
@@ -43,6 +46,22 @@ def normalize_base_url(raw: str | None) -> str | None:
     return value.rstrip("/")
 
 
+def normalize_model(raw: str | None) -> str | None:
+    """Validate a model id (empty means "use the provider's catalogue")."""
+    if raw is None:
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+    if not MODEL_RE.match(value):
+        raise ApiError(
+            "VALIDATION_ERROR",
+            "模型名只能包含字母、数字、点、下划线、冒号、斜杠和连字符",
+            422,
+        )
+    return value
+
+
 def find(db: Session, scope: CredentialScope, user_id: int) -> ProviderCredential | None:
     return (
         db.query(ProviderCredential)
@@ -62,25 +81,28 @@ def save(
     user_id: int,
     api_key: str | None,
     base_url: str | None,
+    model: str | None,
     actor_id: int | None,
     clear_key: bool = False,
 ) -> tuple[ProviderCredential | None, bool]:
     """Apply a credentials change.
 
     * `api_key` non-empty        -> upsert the key
-    * `base_url` is not None     -> set (or clear, when empty) only the endpoint
+    * `base_url` / `model` given -> set (empty clears) endpoint and model id
     * `clear_key=True`           -> delete the record (fall back to the platform key)
-    * `api_key == ""` and no base_url -> legacy "clear" from the old UI
+    * `api_key == ""` and neither field given -> legacy "clear" from the old UI
 
-    Passing `base_url: ""` therefore resets the endpoint to the official one while
-    keeping the key, which is what the "恢复官方地址" button needs.
+    Passing `base_url: ""` resets the endpoint to the official one while keeping
+    the key, which is what the "恢复官方地址" button needs.
     """
     key = (api_key or "").strip()
     url_provided = base_url is not None
+    model_provided = model is not None
     url = normalize_base_url(base_url)
+    model_id = normalize_model(model)
     record = find(db, scope, user_id)
 
-    if clear_key or (api_key == "" and not url_provided):
+    if clear_key or (api_key == "" and not url_provided and not model_provided):
         if record is not None:
             db.delete(record)
         return None, True
@@ -96,6 +118,7 @@ def save(
                 ciphertext=encrypt_secret(key),
                 key_hint=mask_key(key),
                 base_url=url,
+                model=model_id,
                 created_by=actor_id,
             )
             db.add(record)
@@ -104,17 +127,22 @@ def save(
             record.key_hint = mask_key(key)
             if url_provided:
                 record.base_url = url
+            if model_provided:
+                record.model = model_id
             record.updated_at = utcnow()
         return record, False
 
-    if url_provided:
+    if url_provided or model_provided:
         if record is None:
             raise ApiError(
                 "VALIDATION_ERROR",
-                "还没有保存 Key：请先填写 API Key，再单独修改 Base URL",
+                "还没有保存 Key：请先填写 API Key，再单独修改地址或模型",
                 422,
             )
-        record.base_url = url
+        if url_provided:
+            record.base_url = url
+        if model_provided:
+            record.model = model_id
         record.updated_at = utcnow()
         return record, False
 
@@ -127,25 +155,26 @@ def view(record: ProviderCredential | None) -> dict:
         "configured": record is not None,
         "hint": record.key_hint if record else "",
         "base_url": record.base_url if record else None,
+        "model": record.model if record else None,
         "updated_at": record.updated_at.isoformat() + "Z" if record else None,
     }
 
 
-def effective(db: Session, user_id: int) -> tuple[str | None, str | None]:
-    """Return (api_key, base_url) for a user: their own record wins over platform."""
+def effective(db: Session, user_id: int) -> tuple[str | None, str | None, str | None]:
+    """Return (api_key, base_url, model) for a user: own record wins over platform."""
     own = find(db, CredentialScope.user, user_id)
     platform = find(db, CredentialScope.platform, 0)
     record = own or platform
     if record is None:
-        return None, None
+        return None, None, None
     from ..security import decrypt_secret
 
     try:
-        return decrypt_secret(record.ciphertext), record.base_url
+        return decrypt_secret(record.ciphertext), record.base_url, record.model
     except Exception:  # noqa: BLE001 - a rotated MASTER_KEY must not break provisioning
         import logging
 
         logging.getLogger("dsh.provider").exception(
             "cannot decrypt provider credential for user %s", user_id
         )
-        return None, record.base_url
+        return None, record.base_url, record.model

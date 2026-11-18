@@ -45,6 +45,8 @@ class CredentialIn(BaseModel):
     api_key: str | None = Field(default=None, max_length=512)
     # Optional OpenAI-compatible endpoint; `""` resets to the provider default.
     base_url: str | None = Field(default=None, max_length=500)
+    # Optional model id for non-DeepSeek catalogues; `""` clears it.
+    model: str | None = Field(default=None, max_length=100)
     clear_key: bool = False
 
 

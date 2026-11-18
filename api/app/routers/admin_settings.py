@@ -78,6 +78,7 @@ def put_platform_credential(
         user_id=0,
         api_key=payload.api_key,
         base_url=payload.base_url,
+        model=payload.model,
         actor_id=admin.id,
         clear_key=payload.clear_key,
     )
@@ -92,6 +93,7 @@ def put_platform_credential(
             "cleared": cleared,
             "key_changed": bool((payload.api_key or "").strip()),
             "base_url": cred.base_url if cred else None,
+            "model": cred.model if cred else None,
         },
     )
     db.commit()
