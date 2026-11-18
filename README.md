@@ -216,6 +216,7 @@ $EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL
 | [05 部署与运维](docs/05-deployment-ops.md) | compose 拓扑、宿主机准备、首个管理员、备份恢复、升级、排障 |
 | [06 路线图与风险](docs/06-roadmap.md) | 里程碑、验收、二期 GPU 方案、风险登记、待确认项 |
 | [07 前端设计](docs/07-frontend.md) | 路由与页面、布局、状态管理、关键交互、工程结构 |
+| [08 Skill 与插件管理](docs/08-skill-plugin-management.md) | 平台技能仓库、用户启用、物化与热重载；插件目录、合并根、patch 管理、兼容与回滚 |
 
 ## 目录结构
 
