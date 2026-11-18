@@ -86,7 +86,7 @@ flowchart LR
 ## 交付状态
 
 - **功能**：M1–M5 已交付，并在真实 Docker / MySQL / Redis 上跑通端到端回归；此后补齐终端治理、启动迁移、模型端点、版本发现等生产化能力。
-- **验证**：单元测试 **69 条**（SQLite + fakeredis + FakeDriver + 假 registry）；技能/插件另有 Playwright 冒烟脚本 `scripts/ui_smoke_skills.py`；真机回归脚本 `scripts/e2e_remote.py`、`e2e_terminal.py`、`e2e_registry.py`，结果与修掉的 bug 见 [路线图 §5](docs/06-roadmap.md)。
+- **验证**：单元测试 **75 条**（SQLite + fakeredis + FakeDriver + 假 registry）；技能/插件另有 Playwright 冒烟脚本 `scripts/ui_smoke_skills.py`；真机回归脚本 `scripts/e2e_remote.py`、`e2e_terminal.py`、`e2e_registry.py`、`e2e_skills_plugins.py`（真实 MySQL + dsh-docker 镜像，30 项检查），结果与修掉的 bug 见 [路线图 §5](docs/06-roadmap.md) 与 [08 文档 §12](docs/08-skill-plugin-management.md)。
 - **仓库卫生**：不含任何主机地址/口令；CI 的 `security.yml` 会扫描工作区与全部历史。
 
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。

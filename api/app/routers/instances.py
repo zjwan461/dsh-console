@@ -32,6 +32,7 @@ from ..services.instances import (
     get_instance,
     instance_view,
     provision,
+    public_authority,
     resolve_token,
     restart_instance,
     start_instance,
@@ -344,7 +345,10 @@ def launch(
         request,
         {
             "state": "running",
-            "url": f"{settings.public_scheme}://console.{domain}/go/{ticket}",
+            "url": (
+                f"{settings.public_scheme}://console.{domain}"
+                f"{public_authority(domain)}/go/{ticket}"
+            ),
         },
     )
 

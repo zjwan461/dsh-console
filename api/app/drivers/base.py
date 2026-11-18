@@ -77,6 +77,15 @@ class NodeDriver(Protocol):
 
     def pull(self, image_ref: str) -> None: ...
 
+    def read_image_plugins(self, image_ref: str) -> dict[str, str]:
+        """Map `/opt/dsh-plugins/<dir>` -> package name, without starting the workload.
+
+        Used to refuse a platform plugin whose name the image already ships: the
+        entrypoint would scan two directories claiming the same package and the
+        winner would depend on directory order.
+        """
+        ...
+
     def load_image(self, path: str) -> list[str]:
         """`docker load` a `docker save` tarball; returns the loaded references."""
         ...

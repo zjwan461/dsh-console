@@ -41,8 +41,8 @@ RUNNING = {InstanceStatus.running, InstanceStatus.sleeping, InstanceStatus.wakin
 
 
 def instance_url(instance: Instance, db: Session) -> str:
-    domain = get_setting(db, "base_domain", settings.base_domain)
-    return f"{settings.public_scheme}://{instance.subdomain}.{domain}"
+    domain = str(get_setting(db, "base_domain", settings.base_domain))
+    return f"{settings.public_scheme}://{instance.subdomain}.{domain}{public_authority(domain)}"
 
 
 def log_event(
@@ -90,13 +90,28 @@ def _effective_credential(db: Session, user_id: int) -> tuple[str | None, str | 
     return provider.effective(db, user_id)
 
 
+def public_authority(domain: str) -> str:
+    """`host:port` exactly as the browser will send it, or just `host`."""
+    port = settings.public_port
+    if not port:
+        return ""
+    if settings.public_scheme == "https" and port == 443:
+        return ""
+    if settings.public_scheme == "http" and port == 80:
+        return ""
+    return f":{port}"
+
+
 def _env(instance: Instance, db: Session) -> dict[str, str]:
     domain = str(get_setting(db, "base_domain", settings.base_domain))
+    # DSH matches the authority (host:port) it was started with, so a console on
+    # a non-standard port has to register the port-bearing form.
+    host = f"{instance.subdomain}.{domain}"
     env = {
         "DSH_HOME": "/data/dsh",
         "DSH_BIND_HOST": "auto",
         "DSH_BIND_PORT": "3080",
-        "DSH_TRUSTED_HOSTS": f"{instance.subdomain}.{domain}",
+        "DSH_TRUSTED_HOSTS": f"{host},{host}{public_authority(domain)}",
         "DSH_PERMISSION_MODE": "workspace-write",
         "DSH_TELEMETRY_DISABLED": "1",
         "DSH_PLUGIN_ROOT": "/opt/dsh-plugins",

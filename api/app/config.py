@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     base_domain: str = "dsh.example.com"
     console_name: str = "优墨云舱"
+    # Public port the console is reached on when it is not the scheme default
+    # (a test host on :38080, for instance). Instance URLs, the /go redirect and
+    # DSH's trusted-host fence all have to carry it: the browser sends
+    # `Host: sub.domain:38080` and DSH rejects an authority it does not trust.
+    public_port: int | None = None
 
     bootstrap_admin_username: str = "admin"
     bootstrap_admin_password: str = ""

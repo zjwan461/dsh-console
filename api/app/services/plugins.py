@@ -174,12 +174,75 @@ def plugins_root() -> Path:
     return path
 
 
+# image_ref -> {dir: package}. Reading an image costs a throwaway container, so
+# the answer is cached for the process; a pulled image does not change.
+_BUILTIN_CACHE: dict[str, dict[str, str]] = {}
+
+
+def builtin_plugins(db: Session) -> dict[str, str]:
+    """Package names the ready images already ship under /opt/dsh-plugins."""
+    return _builtin_plugins(db)[0]
+
+
+def _builtin_plugins(db: Session) -> tuple[dict[str, str], bool]:
+    """`(listing, complete)`. Incomplete means at least one image could not be read,
+    so callers must not treat the result as authoritative (never prune on it)."""
+    from ..drivers.factory import get_driver
+    from ..models import DshImage, ImageStatus
+
+    refs = [
+        row[0]
+        for row in db.query(DshImage.image_ref)
+        .filter(DshImage.status == ImageStatus.ready)
+        .all()
+    ]
+    if not refs:
+        return {}, False
+    found: dict[str, str] = {}
+    complete = True
+    for ref in refs:
+        if ref in _BUILTIN_CACHE:
+            found.update(_BUILTIN_CACHE[ref])
+            continue
+        try:
+            listing = get_driver().read_image_plugins(ref)
+        except Exception:  # noqa: BLE001 - a probe failure must not block imports
+            import logging
+
+            logging.getLogger("dsh.plugins").warning(
+                "cannot read plugins from image %s; skipping the collision check", ref
+            )
+            complete = False
+            continue
+        _BUILTIN_CACHE[ref] = listing
+        found.update(listing)
+    return found, complete
+
+
+def assert_not_builtin(db: Session, package_name: str) -> None:
+    """Refuse a platform plugin the image already provides.
+
+    Both would sit under /opt/dsh-plugins claiming the same package name, and the
+    entrypoint's scan order would decide which one loads.
+    """
+    builtin = builtin_plugins(db)
+    if package_name in builtin.values():
+        dirs = [name for name, package in builtin.items() if package == package_name]
+        raise ApiError(
+            "PLUGIN_NAME_COLLIDES",
+            f"镜像已内置同名插件 {package_name}（{'/'.join(sorted(dirs))}）。"
+            "要改它的行为请改镜像，或在 cordis.patch.yml 里调整选项",
+            409,
+        )
+
+
 def import_plugin(db: Session, filename: str, fileobj, actor_id: int | None) -> Plugin:
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp)
         _extract(filename, fileobj, staging)
         root = locate_bundle(staging)
         meta = validate_bundle(root)
+        assert_not_builtin(db, meta["name"])
         plugin = (
             db.query(Plugin).filter(Plugin.package_name == meta["name"]).first()
         )
@@ -242,6 +305,9 @@ def current_revision(db: Session, plugin: Plugin) -> PluginRevision | None:
 
 
 def set_status(db: Session, plugin: Plugin, status: PluginStatus) -> Plugin:
+    if status == PluginStatus.enabled:
+        # The image may have been swapped since the import; re-check on enable.
+        assert_not_builtin(db, plugin.package_name)
     plugin.status = status
     db.commit()
     return plugin
@@ -333,6 +399,9 @@ def remove_plugin_block(text: str, package: str) -> tuple[str, bool]:
         - insert: ...
 
     A block runs until the next `# bundled plugin:` / separator line, or EOF.
+    The separator header that introduced it is dropped too when it would be left
+    with nothing under it — otherwise every enable/disable cycle accumulates an
+    empty `# --- bundled plugins` line.
     """
     lines = text.splitlines(keepends=True)
     start = None
@@ -349,7 +418,43 @@ def remove_plugin_block(text: str, package: str) -> tuple[str, bool]:
         if stripped.startswith(PATCH_START) or stripped.startswith("# --- bundled plugins"):
             end = index
             break
+    # Drop the header that introduced this block when nothing else follows it.
+    header = start - 1
+    if header >= 0 and lines[header].strip().startswith("# --- bundled plugins"):
+        rest = "".join(lines[end:]).strip()
+        if not rest:
+            start = header
     return "".join(lines[:start] + lines[end:]), True
+
+
+def _block_names(text: str) -> list[str]:
+    names = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(PATCH_START):
+            names.append(stripped[len(PATCH_START) :].strip())
+    return names
+
+
+def _prune_stale_blocks(db: Session, text: str) -> tuple[str, bool]:
+    """Drop entrypoint-seeded blocks whose plugin no longer exists anywhere.
+
+    Changing an instance's image leaves the previous image's blocks behind: they
+    reference packages that are gone, so DSH reports "N entries did not activate"
+    and the browser waits forever for client bundles that will never be served.
+    Only runs when every ready image could actually be read — without that list,
+    "not present" would be indistinguishable from "could not check".
+    """
+    builtin, complete = _builtin_plugins(db)
+    if not complete:
+        return text, False
+    present = set(builtin.values()) | {row[0] for row in db.query(Plugin.package_name).all()}
+    changed = False
+    for name in _block_names(text):
+        if name not in present:
+            text, removed = remove_plugin_block(text, name)
+            changed = changed or removed
+    return text, changed
 
 
 def sync_instance_plugins(db: Session, instance: Instance) -> dict:
@@ -403,8 +508,8 @@ def sync_instance_plugins(db: Session, instance: Instance) -> dict:
             (root / f".{entry.name}.checksum").unlink(missing_ok=True)
             changed = True
 
-    # Remove patch blocks for platform plugins that are no longer assigned.
-    # Image built-ins are never in the plugins table, so their blocks are safe.
+    # Remove patch blocks for platform plugins that are no longer assigned. Image
+    # built-ins are never in the plugins table, so their blocks are safe.
     patch_path = Path(instance.data_path) / "cordis.patch.yml"
     if patch_path.is_file():
         text = patch_path.read_text(encoding="utf-8")
@@ -413,6 +518,8 @@ def sync_instance_plugins(db: Session, instance: Instance) -> dict:
         for stale in known - assigned_names:
             text, removed = remove_plugin_block(text, stale)
             changed = changed or removed
+        text, pruned = _prune_stale_blocks(db, text)
+        changed = changed or pruned
         patch_path.write_text(text, encoding="utf-8")
 
     desired_hash = hashlib.sha256(

@@ -142,6 +142,17 @@ class FakeDriver:
         if not image_ref:
             raise DriverError("empty image ref")
 
+    # Mirrors the real dsh image, which ships these two plugins.
+    BUILTIN_PLUGINS = {
+        "dsh-file-download": "@local/dsh-file-download",
+        "mobile-layout": "@local/dsh-mobile-layout",
+    }
+
+    def read_image_plugins(self, image_ref: str) -> dict[str, str]:
+        if not image_ref:
+            raise DriverError("empty image ref")
+        return dict(self.BUILTIN_PLUGINS)
+
     def load_image(self, path: str) -> list[str]:
         import os
 

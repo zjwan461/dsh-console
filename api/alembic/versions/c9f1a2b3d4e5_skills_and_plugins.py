@@ -12,13 +12,21 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.mysql import BIGINT as MySQLBigInt
 
 revision: str = "c9f1a2b3d4e5"
 down_revision: str | None = "b4d7e2c1a903"
 branch_labels = None
 depends_on = None
 
-BIGINT = sa.BigInteger().with_variant(sa.Integer, "sqlite")
+# Must match models.py exactly. MySQL rejects a foreign key whose two sides
+# differ in signedness ("Referencing column ... are incompatible", errno 3780),
+# and users.id is BIGINT UNSIGNED there.
+BIGINT = (
+    sa.BigInteger()
+    .with_variant(MySQLBigInt(unsigned=True), "mysql")
+    .with_variant(sa.Integer, "sqlite")
+)
 
 
 def _timestamps() -> list[sa.Column]:

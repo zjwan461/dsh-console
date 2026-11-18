@@ -242,6 +242,48 @@ class DockerDriver:
         except Exception as exc:
             raise DriverError(f"docker pull failed: {exc}") from exc
 
+    def read_image_plugins(self, image_ref: str) -> dict[str, str]:
+        """Read the image's bundled plugin names in a throwaway container.
+
+        `dsh` images ship plugins under /opt/dsh-plugins; a platform plugin with
+        the same package name would make the winner depend on scan order, so the
+        import/enable path needs this list. The container never runs the workload
+        (entrypoint is cleared) and is removed even when the probe fails.
+        """
+        script = (
+            "for d in /opt/dsh-plugins/*/; do "
+            '[ -f "$d/package.json" ] || continue; '
+            "n=$(node -p \"require('$d/package.json').name\" 2>/dev/null); "
+            '[ -n "$n" ] && printf "%s\\t%s\\n" "$(basename "$d")" "$n"; '
+            "done"
+        )
+        container = None
+        try:
+            container = self.client.containers.create(
+                image=image_ref,
+                command=["sh", "-lc", script],
+                entrypoint=[""],
+                network_disabled=True,
+                labels={"dsh.console.probe": "image-plugins"},
+            )
+            container.start()
+            container.wait(timeout=90)
+            raw = container.logs(stdout=True, stderr=False).decode("utf-8", "replace")
+        except Exception as exc:
+            raise DriverError(f"cannot read image plugins: {exc}") from exc
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except Exception:  # noqa: BLE001 - cleanup must not mask the result
+                    log.warning("failed to remove plugin probe container", exc_info=True)
+        found: dict[str, str] = {}
+        for line in raw.splitlines():
+            name, _, package = line.partition("\t")
+            if package.strip():
+                found[name.strip()] = package.strip()
+        return found
+
     def load_image(self, path: str) -> list[str]:
         try:
             with open(path, "rb") as fh, self._long_op(settings.docker_pull_timeout):

@@ -196,6 +196,60 @@ def test_disable_removes_patch_block_and_directory(client: TestClient):
     assert not os.path.exists(folder)
 
 
+def test_stale_blocks_are_pruned_only_when_the_image_listing_is_complete(client: TestClient):
+    """An image swap leaves blocks for packages that no longer exist; the browser
+    then waits forever for client bundles the server cannot serve."""
+    from app.services import plugins as svc
+
+    header = "# --- bundled plugins (seeded once by entrypoint.sh; edit freely) ---\n"
+    text = (
+        header
+        + "# bundled plugin: @local/gone-in-new-image\n- insert:\n    - id: gone\n"
+        + "# bundled plugin: @local/dsh-mobile-layout\n- insert:\n    - id: keep\n"
+    )
+
+    svc._BUILTIN_CACHE.clear()
+    # The client fixture has no DB session here, so open one for the service.
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        cleaned, changed = svc._prune_stale_blocks(db, text)
+    assert changed is True
+    assert "@local/gone-in-new-image" not in cleaned
+    assert "@local/dsh-mobile-layout" in cleaned  # present in the fake image
+
+    # When the image cannot be read, nothing may be pruned.
+    svc._BUILTIN_CACHE.clear()
+    original = svc._builtin_plugins
+    svc._builtin_plugins = lambda db: ({}, False)
+    try:
+        with SessionLocal() as db:
+            same, touched = svc._prune_stale_blocks(db, text)
+    finally:
+        svc._builtin_plugins = original
+    assert touched is False
+    assert same == text
+
+
+def test_builtin_collision_is_refused(client: TestClient):
+    """The image already ships @local/dsh-file-download, so importing it again
+    would leave two directories claiming one package name."""
+    csrf = _admin(client)
+    response = client.post(
+        "/api/v1/admin/plugins/import",
+        files={
+            "file": (
+                "builtin.zip",
+                _bundle(version="9.9.9", name="@local/dsh-file-download"),
+                "application/zip",
+            )
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "PLUGIN_NAME_COLLIDES"
+
+
 def test_plugin_patch_removal_keeps_other_blocks():
     from app.services.plugins import remove_plugin_block
 
@@ -213,6 +267,21 @@ def test_plugin_patch_removal_keeps_other_blocks():
     same, removed_again = remove_plugin_block(result, "@local/a")
     assert removed_again is False
     assert same == result
+
+
+def test_removing_the_last_block_drops_the_empty_header():
+    from app.services.plugins import remove_plugin_block
+
+    text = (
+        "- id: other\n  config:\n    keep: true\n"
+        "# --- bundled plugins (seeded once by entrypoint.sh; edit freely) ---\n"
+        "# bundled plugin: @local/only\n- insert:\n    - id: only\n"
+    )
+    result, removed = remove_plugin_block(text, "@local/only")
+    assert removed is True
+    assert "bundled plugins" not in result
+    assert "@local/only" not in result
+    assert "keep: true" in result
 
 
 def test_user_can_see_assigned_plugins_but_not_toggle(client: TestClient):

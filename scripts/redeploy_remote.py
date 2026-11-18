@@ -144,6 +144,7 @@ def main() -> None:
         "CADDY_ADMIN_URL=http://console-web:2019",
         "CADDY_ACCESS_LOG_ENABLED=1",
         "PUBLIC_SCHEME=http",
+        f"PUBLIC_PORT={cfg.HTTP_PORT}",
         "JOBS_INLINE=0",
         f"DSH_IMAGE_REPOSITORY={os.environ.get('DSH_IMAGE_REPOSITORY', 'ghcr.io/zjwan461/dsh-docker')}",
         "REGISTRY_CHECK_ENABLED=1",
@@ -184,6 +185,24 @@ def main() -> None:
                 }
             },
             "ExposedPorts": {"80/tcp": {}},
+        },
+    )
+    # The worker runs the same code: it owns the skill/plugin reconcile loops, so
+    # a new image has to be picked up here too.
+    ensure(
+        "console-worker",
+        {
+            "Image": cfg.API_IMAGE,
+            "Cmd": ["python", "-m", "app.worker"],
+            "Env": env,
+            "HostConfig": {
+                "Binds": binds,
+                "RestartPolicy": {"Name": "unless-stopped"},
+                "NetworkMode": cfg.NET_CONSOLE,
+            },
+            "NetworkingConfig": {
+                "EndpointsConfig": {cfg.NET_CONSOLE: {"Aliases": ["console-worker"]}}
+            },
         },
     )
     print("redeployed")

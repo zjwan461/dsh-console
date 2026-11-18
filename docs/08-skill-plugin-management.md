@@ -1,6 +1,6 @@
 # 08 · Skill 与插件管理设计
 
-> 状态：技能已实现（P0）；插件离线部分已实现（P1），真机加载/回滚待验证
+> 状态：技能与插件全部实现，并在真实 Docker / MySQL / dsh-docker 镜像上通过回归（`scripts/e2e_skills_plugins.py`，30 项全绿）
 > 前置决策（2026-11-18）：
 > 1. 用户对「管理员开放的 skill」**默认全启用**；
 > 2. 用户在 workspace 里自己放 `.dsh/skills` 属个人行为，**不做监管**，控制台只提供平台技能仓库；
@@ -368,7 +368,7 @@ plugins_desired = hash(sorted(granted plugin revisions))
 | P1-1 | 插件模型 + bundle 校验 + 兼容性记录 | ✅ |
 | P1-2 | 子路径挂载 + patch 清理 + 待重启 | ✅（离线） |
 | P1-3 | 管理端插件页 + 套餐/用户分配 | ✅ |
-| P1-4 | 真机验证（插件加载、禁用、回滚、同名检测） | ⏳ 需要 Docker |
+| P1-4 | 真机验证（插件加载、同名冲突、陈旧块清理） | ✅ 见 §12 |
 
 ## 10. 测试要点
 
@@ -387,3 +387,41 @@ plugins_desired = hash(sorted(granted plugin revisions))
 1. 平台 skill 的正文是否对普通用户可见？当前设计：列表只显示 description，不展示脚本内容。
 2. 插件 patch 的选项（如登录门禁账号）是否需要在管理端提供表单？建议 P2 再做。
 3. 是否需要“按 DSH 版本锁定 skill revision”（同一 skill 对不同镜像版本用不同内容）？当前设计：不锁定，所有版本共用。
+
+## 12. 真机验证记录（2026-11-18）
+
+环境：真实 Docker 29.6、MySQL 8.0.39、镜像 `ghcr.io/zjwan461/dsh-docker:0.2.1-rc.5`，脚本 `scripts/e2e_skills_plugins.py`（30 项检查全绿）。
+
+### 12.1 已验证
+
+| 项 | 结果 |
+|---|---|
+| MySQL 迁移到 `c9f1a2b3d4e5`，7 张新表 | ✅ |
+| 技能 CRUD / 授权 / 发布在 MySQL 上 | ✅ |
+| 技能物化到容器 `/data/dsh/skills/<name>/SKILL.md` | ✅ |
+| 用户关闭技能后容器内目录被移除，重新开启后恢复 | ✅ |
+| 插件只读挂载到 `/opt/dsh-plugins/<flat>`，镜像内置插件仍在 | ✅ |
+| entrypoint 打印 `bundled plugin <name>: enabled`，无 `plugin tree failed to load` | ✅ |
+| `node -e "import('<包名>')"` 从 `/data/dsh/profiles/web` 解析成功 | ✅ |
+| `dsh --profile web --dump-config` 组合结果包含该插件 | ✅ |
+| 停用后 patch 块被删除，重启后容器正常启动、挂载消失 | ✅ |
+| 插件变更 → `needs_restart` → 重启后清除 | ✅ |
+| 镜像已有同名插件时导入被拒（409 `PLUGIN_NAME_COLLIDES`） | ✅ |
+
+技能侧补充：`skill-filesystem` 在顶层是 `disabled: true`，但在默认的 `preset-standard` 智能体预设里是**启用**的，根目录含 `$DSH_HOME/skills`，因此物化路径正确。DSH 不提供技能列表 API/页面，脚本级发现未直接观测；如需最终确认，配好模型 Key 后让会话列出技能即可。
+
+### 12.2 真机暴露并已修复的问题
+
+1. **MySQL 外键符号性**：`users.id` 是 `BIGINT UNSIGNED`，迁移里写成有符号 `BIGINT` 导致 errno 3780。迁移改用与 `models.py` 一致的 `with_variant(mysql.BIGINT(unsigned=True))`。
+2. **同名插件冲突**：镜像自带 `@local/dsh-file-download`、`@local/dsh-mobile-layout`；平台再导入同名包会让两个目录争一个包名、胜者取决于扫描顺序。现在导入与启用都会读镜像清单并拒绝（`assert_not_builtin`）。
+3. **陈旧 patch 块**：换镜像后旧镜像的块（`dsh-minimax-h3`、`@local/dsh-login-gate`）留在 `cordis.patch.yml`，DSH 报 “2 entries did not activate”，**浏览器会永远卡在 Loading plugins**。现在 reconcile 会清理「不在镜像清单里、也不是平台插件」的块；读不到镜像清单时**不清理**（避免把可用实例改坏）。
+4. **非标准端口**：实例 URL 与 DSH `--trusted-host` 都不带端口，`:38080` 部署下 `/go` 跳到打不开的地址、WebSocket 被信任围栏拒绝。新增 `PUBLIC_PORT`，同时作用于实例 URL、`/go` 跳转和 `DSH_TRUSTED_HOSTS`。
+5. **删块留下空表头**：反复启停会累积 `# --- bundled plugins ---` 空行，现在删除最后一个块时一并去掉表头。
+6. **运行中删插件目录**：容器可能还挂着该目录，改为停用后延迟到容器重建再回收。
+
+### 12.3 尚未覆盖
+
+- 插件与 DSH 版本的**硬性**兼容校验（当前只记录并在界面展示 `dsh_versions`）。
+- 插件导致启动失败时的自动回滚 / quarantine。
+- 技能的端到端「模型可见」确认（需模型 Key，见 12.1 末）。
+- 容器重建期间的用户可见状态提示（现在只有「待重启」标签）。
