@@ -1,25 +1,79 @@
-# 优墨云舱（dsh-console）
+# 优墨云舱 · DSH 云电脑控制台
 
-> 优墨系列第三款：给每个人一间随开随用的云端工作舱。
+**一人一舱，随处开工。** 把 [`dsh-docker`](../dsh-docker) 的单用户部署，变成**多用户、可计量、可运维**的云端工作舱：登录即用、离开休眠、按活跃时长计费、版本一键升级。
 
-把 [`dsh-docker`](../dsh-docker) 的单用户部署，变成**多用户、可计量、可运维**的「DSH 云电脑」平台：
+[![build-images](https://github.com/zjwan461/dsh-console/actions/workflows/build-images.yml/badge.svg)](https://github.com/zjwan461/dsh-console/actions/workflows/build-images.yml)
+[![security](https://github.com/zjwan461/dsh-console/actions/workflows/security.yml/badge.svg)](https://github.com/zjwan461/dsh-console/actions/workflows/security.yml)
+![python](https://img.shields.io/badge/Python-3.12-2f6f63)
+![vue](https://img.shields.io/badge/Vue-3-42b883)
+![fastapi](https://img.shields.io/badge/FastAPI-0.115-009688)
+![docker](https://img.shields.io/badge/Docker-Engine-2496ed)
 
-- 用户登录控制台 → 看到自己的 harness 实例 → 一键启停 / 进入 / 看用量 / 存快照；
-- 管理员维护 DSH 镜像版本、分配套餐与时长、看全机与全站监控。
+![登录页](docs/images/login.jpg)
 
-**版本自动发现**：控制台直接读 `ghcr.io/zjwan461/dsh-docker` 的 registry 元数据（tag / digest / 大小 / 构建时间，**不拉镜像**），发现新构建后一键导入并设为默认；离线环境仍可导入 `docker save` 的 tar 包。
+## 这是什么
 
-**模型接入不锁定厂商**：用户或管理员可以同时配置 Key、**Base URL** 和**模型名**。只填地址时走 DeepSeek 适配器；填了模型名（如 `qwen2.5-32b-instruct`）会生成通用 `openai-completions` 提供方并设为默认模型。重启时按配置哈希自动重建容器，保证改动真的生效。
+每个用户不再是“共享服务器上的一个目录”，而是拿到**一间独立的舱**：
 
-**无感升级**：每次启动（dev 和 prod 一样）都会把数据库迁到代码期望的 `head`，多 worker 用数据库锁串行化；升级只需替换镜像并重启，不需要手工跑 Alembic。
+- **独立入口**：`<用户名>.<域名>` 子域名 + 单次 ticket 注入 token，点“打开云舱”直接进 DSH，不用自己配环境；
+- **独立资源**：自己的容器、数据目录、CPU/内存/磁盘配额与时长；闲置自动休眠，回来点一下唤醒；
+- **独立账本**：按活跃时长扣减，CPU/内存/网络用量按小时落库，管理员能看全站成本。
+
+管理员在舱外统一调度：镜像版本、套餐配额、实例启停、全站监控、公告工单。
+
+## 界面
+
+| 工作台：配额、实例、公告 | 版本管理：GHCR 自动发现 / tar 离线导入 |
+|---|---|
+| ![工作台](docs/images/dashboard.jpg) | ![版本管理](docs/images/versions.jpg) |
+| **实例运维**：强制启停、日志、Web 终端 | **用户与配额**：套餐、时长、重置密码 |
+| ![实例运维](docs/images/instances.jpg) | ![用户管理](docs/images/users.jpg) |
+
+## 核心能力
+
+| 能力 | 说明 |
+|---|---|
+| 实例生命周期 | 创建 / 启动 / 停止 / 重启 / 删除；容器资源限制、健康检查、失败回滚；操作锁避免并发打架 |
+| 访问与登录 | 每用户子域名；`/go/{ticket}` 单次 token 跳转；停止态落到唤醒页 `/w/{key}`，不泄露 token |
+| 计量与配额 | worker 每 30s 采样 Docker stats，按小时聚合落库；活跃才扣时长；配额耗尽自动停机 |
+| 闲置休眠 | 按网络/请求活动判定空闲，超时休眠；用户点击即唤醒，省内存也省时长 |
+| 快照与镜像 | 数据快照往返；容器 commit 成个人镜像；版本切换；保留策略 |
+| 版本治理 | 直接读 GHCR registry 元数据（不拉镜像）发现新构建，一键导入设默认；也支持 `docker save` tar 上传 |
+| 模型接入 | Key + Base URL + 模型名可配；非 DeepSeek 模型自动生成 `openai-completions` 提供方 |
+| 管理端 | 全站实例、强制操作、日志、真实 PTY Web 终端（xterm.js）、审计、公告、工单、邀请码 |
+| 无感升级 | 每次启动自动把库迁到代码期望的 `head`；多 worker 用数据库锁串行化 |
+| 部署 | 单机 Docker Compose；Caddy 动态路由；GHCR CI 出镜像；`app.cli doctor` 上线自检 |
+
+## 架构
+
+```mermaid
+flowchart LR
+  B[用户浏览器] -->|user.domain| C[Caddy]
+  B -->|console.domain| C
+  C -->|/api /go /w| A[console-api]
+  C -->|user.domain| D[dsh 容器]
+  A -->|docker.sock| E[Docker Engine]
+  E --> D
+  A --> M[(MySQL 8)]
+  A --> R[(Redis 7)]
+  W[console-worker] --> M
+  W --> R
+  W --> E
+  A -.->|全量配置 /load| C
+```
+
+- **Caddy** 是唯一入口与 TLS 终结者，路由由 API 通过 admin API 全量下发；
+- **console-api** 负责控制面（认证、实例、配额、Caddy 配置），挂载 `docker.sock`；
+- **console-worker** 负责数据面采样（计量、休眠、配额、节点指标、Caddy 日志）；
+- 每个用户一个 **dsh 容器**，只加入 `dsh-edge` 网络，不发布端口。
+
+## 交付状态
+
+- **功能**：M1–M5 已交付，并在真实 Docker / MySQL / Redis 上跑通端到端回归；此后补齐终端治理、启动迁移、模型端点、版本发现等生产化能力。
+- **验证**：单元测试 **56 条**（SQLite + fakeredis + FakeDriver + 假 registry）；真机回归脚本 `scripts/e2e_remote.py`、`e2e_terminal.py`、`e2e_registry.py`，结果与修掉的 bug 见 [路线图 §5](docs/06-roadmap.md)。
+- **仓库卫生**：不含任何主机地址/口令；CI 的 `security.yml` 会扫描工作区与全部历史。
 
 **为什么叫「云舱」**：每个用户拿到的不是一个抽象容器，而是一间独立的舱——有自己的子域名、数据目录、配额与时长；离开时自动休眠，回来点一下就能继续。舱与舱之间隔离，管理员在舱外统一调度。英文名可写作 **YouMo Cloud Cabin**。
-
-> **当前状态：M1–M5 已完成并在真实环境跑通端到端回归；版本自动发现已上线。**
->
-> - 功能：认证/用户/套餐/配额/审计、实例生命周期与 Caddy 路由、计量/休眠/配额扣减、快照/镜像/版本切换、文件管理、管理员终端、监控大盘、公告/工单、GHCR 版本发现与 tar 导入。
-> - 验证：单元测试 29 条（SQLite + fakeredis + FakeDriver + 假 registry）；真机回归 `scripts/e2e_remote.py`、`scripts/e2e_terminal.py`、`scripts/e2e_registry.py`，结果见 [路线图 §5](docs/06-roadmap.md)。
-> - 真机回归修掉的 bug（Caddy 日志配置、`/go` 路由、实例锁、commit 超时、WS 鉴权、容量降级）记录在路线图里。
 
 ## 快速开始（Docker）
 
@@ -104,6 +158,13 @@ python scripts/shots.py --out shots/before
 - 空状态：统一的 `.blank` 虚线块，替代 Element 默认插画。
 - 登录页：左侧品牌叙事 + 右侧表单，窄屏自动隐藏左栏。
 
+上面的截图由 `scripts/readme_shots.py` 生成（Playwright 驱动本机 Chrome，使用 `scripts/seed_demo.py` 的演示数据，不含真实主机信息）：
+
+```bash
+python scripts/seed_demo.py      # 本地 FakeDriver 环境
+python scripts/readme_shots.py   # 输出 docs/images/*.jpg
+```
+
 ## 真机回归脚本
 
 `scripts/` 下是可复现的远端验证工具（不依赖本地 Docker）。**所有主机信息都从环境变量读取，仓库里不含任何 IP、端口或口令。**
@@ -125,7 +186,7 @@ $EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL
 
 > 回归脚本每次运行都会真实登录，`LOGIN_RATE_PER_HOUR` 很容易打满；被限流时先跑 `clear_login_limit.py`，或临时调大该变量。
 
-## 技术栈（已确认）
+## 技术栈
 
 | 层 | 选型 | 说明 |
 |---|---|---|
@@ -133,7 +194,7 @@ $EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL
 | 后端 | Python 3.12 + FastAPI + SQLAlchemy 2 + Alembic + Pydantic v2 | 同步 SQLAlchemy（线程池执行）；docker-py 走 unix socket |
 | 任务 | `console-worker`（asyncio 常驻循环） | 计量采样/落库、休眠、配额、节点指标、Caddy 日志采集。未引入 ARQ：任务都是周期性的，换队列不影响业务层 |
 | 数据库 | MySQL 8.4 | 业务数据；utf8mb4 |
-| 缓存/队列 | Redis 7 | 会话、token 缓存、计数器、分布式锁、ARQ |
+| 缓存 | Redis 7 | 会话、登录限流、token 缓存、实例操作锁；单机也可用 fakeredis（仅开发） |
 | 容器 | Docker Engine API（`/var/run/docker.sock`） | 单机；后期换 K8s 时加 Driver |
 | 入口 | Caddy 2（管理 API 动态路由） | 唯一 TLS 终结者；泛域名内部 CA |
 
@@ -149,27 +210,18 @@ $EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL
 | [06 路线图与风险](docs/06-roadmap.md) | 里程碑、验收、二期 GPU 方案、风险登记、待确认项 |
 | [07 前端设计](docs/07-frontend.md) | 路由与页面、布局、状态管理、关键交互、工程结构 |
 
-## 一句话架构
-
-```
-浏览器 ──443──> caddy ──┬── console.dsh.example.com ──> console-api（SPA + /api）
-                        └── {user}.dsh.example.com ──> dsh-u-{id}:3080（运行中）
-                                                       └─ 休眠时 ──> console-api 的唤醒页
-```
-
-控制面（FastAPI + worker）通过 Docker API 管理每用户一个的 DSH 容器；Caddy 通过 Admin API 按用户动态挂路由；用户的登录 token 由控制面从容器日志里取出后以 302 注入，用户不需要看见 token。
-
 ## 目录结构
 
 ```
 dsh-console/
 ├── api/                 # FastAPI 控制面
-│   ├── app/             # 路由、模型、服务、安全
+│   ├── app/             # 路由、模型、服务、安全、启动迁移
 │   ├── alembic/         # 迁移
-│   └── tests/           # SQLite + fakeredis 冒烟测试
+│   └── tests/           # SQLite + fakeredis + FakeDriver
 ├── web/                 # Vue3 + Element Plus SPA
-├── deploy/              # Dockerfile.api / Dockerfile.web / Caddyfile
-└── docs/                # 设计与运维文档
+├── deploy/              # Dockerfile.web / Caddyfile
+├── docs/                # 设计与运维文档、README 截图
+└── scripts/             # 本地演示、截图、真机回归工具
 ```
 
 ## 与 dsh-docker 的关系
