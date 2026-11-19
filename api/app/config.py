@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -111,6 +112,19 @@ class Settings(BaseSettings):
     disk_use_ratio: float = 0.90
 
     cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("public_port", "caddy_listen_port", mode="before")
+    @classmethod
+    def _blank_optional_int_is_none(cls, value: Any) -> Any:
+        """Treat an empty env var as "not set".
+
+        docker compose passes `${VAR:-}` through as an empty string when the
+        variable is absent, and pydantic would otherwise fail to parse it as an
+        int — which crashed the API on boot, before it could even report why.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @property
     def is_dev(self) -> bool:

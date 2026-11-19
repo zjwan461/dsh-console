@@ -5,6 +5,6 @@ it, and `/system/health` returns it. Keeping one literal is what makes an issue
 report, an image tag and the health endpoint agree.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = ["__version__"]

@@ -5,6 +5,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-11-19
+
+修复 0.1.0 在新机器上**起不来**的问题。
+
+### 修复
+
+- **空的 `PUBLIC_PORT` 会让 API 启动即崩**：`compose.yaml` 用
+  `PUBLIC_PORT: ${PUBLIC_PORT:-}` 传值，变量未设置时得到的是空字符串，
+  pydantic 解析 `int` 失败，容器在打印任何有用日志之前就退出
+  （`Input should be a valid integer, unable to parse string as an integer`）。
+  现在空值（含纯空白）一律视为「未设置」，`caddy_listen_port` 同样处理。
+- 新增 8 条回归用例覆盖「空串 = 未配置」这条路径。
+
+> 受影响的是 0.1.0 的默认部署方式（不填 `PUBLIC_PORT`）。如果你的 `PUBLIC_PORT`
+> 已经显式配置，0.1.0 不受影响。
+
 ## [0.1.0] - 2026-11-19
 
 首个可用版本。控制面、数据面、管理端与用户端功能完整，已在真实 Docker / MySQL 8 /
@@ -81,4 +97,5 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.1]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.1
 [0.1.0]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.0
