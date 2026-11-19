@@ -10,7 +10,7 @@ from .config import settings
 from .models import Plan, Role, Setting, User, UserQuota, UserStatus
 from .security import hash_password, validate_username
 from .services.quota import current_cycle
-from .services.settings import DEFAULT_SETTINGS
+from .services.settings import default_settings
 
 log = logging.getLogger("dsh.seed")
 
@@ -72,7 +72,7 @@ def seed_plans(db: Session) -> None:
 
 
 def seed_settings(db: Session) -> None:
-    for key, value in DEFAULT_SETTINGS.items():
+    for key, value in default_settings().items():
         if db.get(Setting, key) is None:
             db.add(Setting(k=key, v=value))
     try:

@@ -5,6 +5,27 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-11-19
+
+修复 `CONSOLE_BASE_DOMAIN` **完全不生效**的问题——部署到自己的域名后，控制台仍然只
+为 `dsh.example.com` 签证书，浏览器访问真实域名在 TLS 握手阶段就被拒
+（`TLSV1_ALERT_INTERNAL_ERROR`）。
+
+### 修复
+
+- **默认值把环境变量写死了**：`seed_settings` 把硬编码的
+  `base_domain = "dsh.example.com"` 写进数据库，而 Caddy、实例地址都读数据库优先，
+  于是 `CONSOLE_BASE_DOMAIN` 从第一次启动起就形同虚设。现在默认值改为从环境读取
+  （`base_domain` / `console_name` / `dsh_image_repository` / `default_idle_minutes` /
+  `upload_max_mb`）。
+- **存量库自动纠正**：新增 `adopt_env_defaults()`，启动时若库里的值仍等于旧硬编码
+  默认值、而环境要求另一个值，则采用环境值并打一条 warning。管理员**主动改过**的
+  域名不会被覆盖。
+- 新增 3 条回归用例（环境生效、旧值纠正、自定义值保留）。
+
+> 立即绕过（无需升级）：把数据库里的 `base_domain` 改成真实域名，下一次 reconcile
+> （≤60s）会重新下发 Caddy 配置。
+
 ## [0.1.2] - 2026-11-19
 
 修复首次部署时 Caddy 配置发布失败、控制台停在 bootstrap 页的问题。
@@ -114,6 +135,7 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.3]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.3
 [0.1.2]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.2
 [0.1.1]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.1
 [0.1.0]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.0

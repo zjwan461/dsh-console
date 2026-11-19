@@ -66,6 +66,18 @@ async def lifespan(app: FastAPI):
         except SQLAlchemyError:
             log.exception("seed failed (database not ready?)")
             raise
+        # Databases created before the defaults were env-backed still hold the
+        # old hardcoded base domain, which would keep `CONSOLE_BASE_DOMAIN` inert
+        # and make Caddy issue certificates for the wrong name.
+        try:
+            from .services.settings import adopt_env_defaults
+
+            adopted = adopt_env_defaults(db)
+        except Exception:
+            log.exception("could not adopt environment defaults")
+            adopted = []
+        if adopted:
+            log.warning("settings adopted from the environment: %s", ", ".join(adopted))
     try:
         from .drivers import get_driver
 
