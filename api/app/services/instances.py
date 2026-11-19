@@ -74,6 +74,24 @@ def get_instance(db: Session, user_id: int) -> Instance | None:
     )
 
 
+def _failure_detail(driver, container_id: str | None) -> str:
+    """The last meaningful log line of a container that refused to start."""
+    if not container_id:
+        return ""
+    try:
+        tail = driver.logs(container_id, tail=30)
+    except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
+        return ""
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    # Prefer an explicit error; otherwise the last line still beats a bare status.
+    for line in reversed(lines):
+        if "ERROR" in line or "error" in line:
+            return f": {line[:280]}"
+    return f": {lines[-1][:280]}"
+
+
 def _ensure_dirs(instance: Instance) -> None:
     for path in (instance.data_path, instance.workspace_path):
         os.makedirs(path, mode=0o700, exist_ok=True)
@@ -475,7 +493,14 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
         driver.start(instance.container_id)
         info = driver.wait_healthy(instance.container_id, timeout=90)
         if info.status in {"exited", "dead"} or info.health not in {None, "healthy"}:
-            raise RuntimeError(f"container did not become healthy (status={info.status})")
+            # The container's own explanation is far more useful than the status:
+            # e.g. "[dsh] ERROR: $DSH_HOME (/data/dsh) is not writable by uid
+            # 1000:1000; it is owned by 0:0" points straight at a host permission
+            # problem the operator can fix in one command.
+            raise RuntimeError(
+                f"container did not become healthy (status={info.status})"
+                f"{_failure_detail(driver, instance.container_id)}"
+            )
         previous = instance.status
         instance.status = InstanceStatus.running
         instance.needs_restart = False

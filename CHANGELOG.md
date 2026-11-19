@@ -5,6 +5,19 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.6] - 2026-11-19
+
+让实例启动失败时**直接看得见原因**，而不是只有一句 `container did not become healthy`。
+
+### 修复
+
+- 实例起不来时，错误信息附带容器日志里最后一条 error 行。例如宿主机目录属主不对时，
+  页面不再只显示状态，而是直接给出
+  `$DSH_HOME (/data/dsh) is not writable by uid 1000:1000; it is owned by 0:0`
+  ——照着提示 `chown` 或修正 `HOST_DATA_ROOT` 即可。
+- 排障表补充 `HOST_DATA_ROOT` 与项目路径不一致这一条（这是该报错最常见的原因）。
+- 新增 5 条用例覆盖取错误行、回退末行、无日志、驱动异常、长度上限。
+
 ## [0.1.5] - 2026-11-19
 
 修复「导入 GHCR 版本」点了之后一直转圈、刷新后又能点还转圈的问题。
@@ -168,6 +181,7 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.6]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.6
 [0.1.5]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.5
 [0.1.4]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.4
 [0.1.3]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.3

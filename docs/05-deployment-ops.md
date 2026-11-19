@@ -397,6 +397,8 @@ docker compose logs -f console-api | grep -E 'alembic|ready'
 | `docker commit` 报 `content digest ... not found` | 宿主镜像存储缺 blob（本机实测 `dsh` 镜像如此，其他镜像正常）。修复：`docker save <image> \| docker load` 重新入库 |
 | `docker commit`/`pull` 超时 | 大镜像远超默认超时；已由 `DOCKER_COMMIT_TIMEOUT`(1800s)/`DOCKER_PULL_TIMEOUT`(3600s) 覆盖，可再调大 |
 | 终端 500 / 握手失败 | WebSocket 路由不能挂 HTTP 的 CSRF 依赖；`ws_router` 单独注册，靠 cookie 鉴权 |
+| 实例「异常」，日志有 `$DSH_HOME (/data/dsh) is not writable by uid 1000:1000; it is owned by 0:0` | **`HOST_DATA_ROOT` 与项目实际路径不一致**。compose 把 `./data` 挂到容器 `/srv/dsh-console/data`，而实例容器用的是 `HOST_DATA_ROOT/instances/<id>/data`。项目不在 `/srv/dsh-console` 时，这两条路径指向不同目录 ⇒ 实例目录被 Docker 以 root 创建、控制台 `chown` 的那份又是另一个目录。修法：`HOST_DATA_ROOT=<项目绝对路径>/data`，然后 `docker compose up -d` 重建，或先 `sudo chown -R 1000:1000 <该路径>` |
+| 实例「异常」，日志有 `profiles/... EACCES` 或 `.credentials.yaml` 权限 | 宿主目录属主必须与 `INSTANCE_UID:GID`（默认 1000:1000）一致 |
 
 ## 10. 安全清单（上线前逐项）
 
