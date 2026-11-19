@@ -102,6 +102,23 @@ def _instance_route(instance: Instance, base_domain: str) -> dict:
     }
 
 
+def _log_sink_reachable(host: str, port: int) -> bool:
+    """Can Caddy actually open the access-log socket right now?
+
+    Caddy dials a `net` log writer while *loading* the config, so an unreachable
+    sink fails the whole `/load` — routes included. On a cold `docker compose up`
+    the worker usually does not exist yet, which used to make the API log a
+    traceback and leave Caddy in its bootstrap state until the first reconcile.
+    """
+    import socket
+
+    try:
+        socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    return True
+
+
 def build_config(db: Session, base_domain: str | None = None) -> dict:
     domain = base_domain or str(get_setting(db, "base_domain", settings.base_domain))
     console_host = f"console.{domain}"
@@ -136,22 +153,34 @@ def build_config(db: Session, base_domain: str | None = None) -> dict:
         # names the logger it uses. Putting a `logs` key on the server or on the
         # http app is rejected by Caddy with `unknown field "logs"` (this exact
         # shape was verified against Caddy 2.8/2.9 with `caddy adapt`).
-        logger = "access"
-        server["logs"] = {"default_logger_name": logger}
-        config["logging"] = {
-            "logs": {
-                "default": {"exclude": [f"http.log.access.{logger}"]},
-                logger: {
-                    "writer": {
-                        "output": "net",
-                        "address": f"console-worker:{settings.caddy_log_port}",
+        sink_host = "console-worker"
+        if not _log_sink_reachable(sink_host, settings.caddy_log_port):
+            # Routing matters more than access logging: ship the config without
+            # the writer so the console works on the very first boot, and let the
+            # next reconcile pick the writer up once the worker exists.
+            log.warning(
+                "access-log sink %s:%s is not resolvable yet; applying the config "
+                "without it (the next reconcile will retry)",
+                sink_host,
+                settings.caddy_log_port,
+            )
+        else:
+            logger = "access"
+            server["logs"] = {"default_logger_name": logger}
+            config["logging"] = {
+                "logs": {
+                    "default": {"exclude": [f"http.log.access.{logger}"]},
+                    logger: {
+                        "writer": {
+                            "output": "net",
+                            "address": f"{sink_host}:{settings.caddy_log_port}",
+                        },
+                        "encoder": {"format": "json"},
+                        "level": "INFO",
+                        "include": [f"http.log.access.{logger}"],
                     },
-                    "encoder": {"format": "json"},
-                    "level": "INFO",
-                    "include": [f"http.log.access.{logger}"],
-                },
+                }
             }
-        }
     if settings.public_scheme == "https":
         config["apps"]["tls"] = {
             "automation": {

@@ -5,6 +5,23 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.2] - 2026-11-19
+
+修复首次部署时 Caddy 配置发布失败、控制台停在 bootstrap 页的问题。
+
+### 修复
+
+- **访问日志 sink 挡住了路由下发**：Caddy 在 **加载配置时**就会去连接
+  `console-worker:9001`，而 `docker compose up` 冷启动时 API 先起来、worker 还没创建，
+  于是整份 `/load` 被拒（`dial tcp: lookup console-worker: no such host` → `400 Bad Request`），
+  连所有路由一起失效。现在 `build_config` 会先探测 sink 是否可解析：
+  解析不到就**只下发路由、省略日志 writer**（Caddy 改写到自己的 stdout），
+  等 worker 起来后由下一次 reconcile 自动补回。
+- 启动失败时的日志从完整 traceback 改成一行警告，避免每次冷启动都刷一段栈。
+
+> 0.1.1 及更早版本不影响可用性：worker 启动后第一次 reconcile（约 60s 内）会补上配置，
+> 只是日志里会有一段吓人的 traceback。
+
 ## [0.1.1] - 2026-11-19
 
 修复 0.1.0 在新机器上**起不来**的问题。
@@ -97,5 +114,6 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.2]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.2
 [0.1.1]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.1
 [0.1.0]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.0

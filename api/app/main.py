@@ -86,8 +86,13 @@ async def lifespan(app: FastAPI):
                     import time
 
                     time.sleep(1)
-    except Exception:
-        log.warning("could not publish Caddy config at startup", exc_info=True)
+    except Exception as exc:
+        # Expected on a cold start: `console-worker` (the access-log sink) may not
+        # exist yet. build_config already drops the writer in that case, so this
+        # is only for anything else; the worker's first reconcile re-applies.
+        log.warning(
+            "could not publish Caddy config at startup (%s); the next reconcile retries", exc
+        )
     log.info("api ready env=%s prefix=%s", settings.env, settings.api_prefix)
     yield
 

@@ -18,9 +18,10 @@ def _login(client: TestClient, username: str, password: str) -> str:
     return response.json()["data"]["csrf_token"]
 
 
-def test_access_log_lives_on_top_level_logging(client: TestClient):
+def test_access_log_lives_on_top_level_logging(client: TestClient, monkeypatch):
     """Caddy rejects `logs` on the server AND on the http app; the writer belongs
     in the top-level `logging.logs` map, with the server naming the logger."""
+    monkeypatch.setattr("app.services.caddy._log_sink_reachable", lambda *_a: True)
     with SessionLocal() as db:
         config = build_config(db)
     server = config["apps"]["http"]["servers"]["srv0"]
@@ -31,6 +32,23 @@ def test_access_log_lives_on_top_level_logging(client: TestClient):
     assert logging_cfg["access"]["writer"]["address"].startswith("console-worker:")
     assert "http.log.access.access" in logging_cfg["access"]["include"]
     assert logging_cfg["default"]["exclude"] == ["http.log.access.access"]
+
+
+def test_unreachable_log_sink_does_not_block_routes(client: TestClient, monkeypatch):
+    """A cold `docker compose up` starts the API before the worker exists.
+
+    Caddy dials the log writer while loading, so keeping it would fail the whole
+    config and leave the console on the bootstrap page. Routing must win.
+    """
+    monkeypatch.setattr("app.services.caddy._log_sink_reachable", lambda *_a: False)
+    with SessionLocal() as db:
+        config = build_config(db)
+    server = config["apps"]["http"]["servers"]["srv0"]
+    assert "logging" not in config
+    assert "logs" not in server
+    # The routes are still there: console first, instances, then the catch-all.
+    assert len(server["routes"]) >= 2
+    assert server["routes"][0]["match"][0]["host"] == ["console.dsh.example.com"]
 
 
 def test_console_proxies_api_and_browser_entry_points(client: TestClient):
