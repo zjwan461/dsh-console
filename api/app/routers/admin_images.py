@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from ..audit import write_audit
@@ -134,14 +134,21 @@ def check_remote(
     return envelope(request, result)
 
 
-@router.post("/remote/import", status_code=201)
+@router.post("/remote/import", status_code=202)
 def import_remote(
     payload: RemoteImportIn,
     request: Request,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    image = catalog.import_tag(
+    """Reserve the version now, pull it in the background.
+
+    A ~1.3 GB pull cannot finish inside one HTTP request without the UI looking
+    frozen, so the row is created in `importing` state and the client polls the
+    image list for the outcome.
+    """
+    image = catalog.start_import(
         db, payload.tag, is_default=payload.is_default, changelog=payload.changelog
     )
     write_audit(
@@ -154,8 +161,11 @@ def import_remote(
         {"tag": payload.tag, "ref": image.image_ref},
     )
     db.commit()
-    # Refresh so the page immediately shows the tag as imported.
-    catalog.catalog(db, refresh=True)
+    if settings.jobs_inline:
+        catalog.finish_import(image.id)
+        db.refresh(image)
+    else:
+        background.add_task(catalog.finish_import, image.id)
     return envelope(request, image_dict(image))
 
 

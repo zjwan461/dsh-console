@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 
+from app.drivers import DriverError
 from app.services.registry import (
     RegistryClient,
     RegistryError,
@@ -230,19 +231,51 @@ def test_import_remote_tag(client, monkeypatch):
         json={"tag": "0.3.0", "is_default": False},
         headers={"X-CSRF-Token": admin_csrf},
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code == 202, response.text
     image = response.json()["data"]
     assert image["image_ref"] == f"{REPO}:0.3.0"
     assert image["version"] == "0.3.0"
     assert image["source"] == "pull"
+    # JOBS_INLINE=1 in tests, so the pull already finished by the time we reply.
+    assert image["status"] == "ready"
 
-    # Importing the same tag twice is rejected.
+    # Importing the same tag twice is rejected (also while it is still pulling).
     again = client.post(
         "/api/v1/admin/images/remote/import",
         json={"tag": "0.3.0"},
         headers={"X-CSRF-Token": admin_csrf},
     )
     assert again.status_code == 409
+
+
+def test_import_remote_reports_a_failed_pull(client, monkeypatch):
+    """A pull that cannot finish must land as `failed` with a readable reason,
+    not leave the console spinning."""
+    from app.services import image_catalog
+
+    monkeypatch.setattr(image_catalog, "_client", lambda db: make_client(["0.9.9"]))
+
+    def boom(_self, _ref):
+        raise DriverError("registry unreachable")
+
+    monkeypatch.setattr(
+        image_catalog, "get_driver", lambda: type("D", (), {"pull": boom})()
+    )
+
+    csrf = client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "admin12345", "remember": True},
+    ).json()["data"]["csrf_token"]
+    response = client.post(
+        "/api/v1/admin/images/remote/import",
+        json={"tag": "0.9.9"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 202, response.text
+    listed = client.get("/api/v1/admin/images").json()["data"]["items"]
+    row = next(item for item in listed if item["image_ref"].endswith(":0.9.9"))
+    assert row["status"] == "failed"
+    assert "unreachable" in (row["error"] or "")
 
 
 def test_import_tar_upload(client):

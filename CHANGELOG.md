@@ -5,6 +5,22 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.5] - 2026-11-19
+
+修复「导入 GHCR 版本」点了之后一直转圈、刷新后又能点还转圈的问题。
+
+### 修复
+
+- **导入请求被同步拉镜像阻塞**：`/admin/images/remote/import` 在请求里直接
+  `docker pull` 一个 ~1.3 GB 的镜像，前端 `await` 于是长时间无反馈；刷新页面后
+  再点会**再拉一次**（上一次的行还没落库，`IMAGE_DUPLICATE` 拦不住）。
+  现在接口立即返回 `202`，先以 `importing` 状态落库再后台拉取：
+  - 立刻出现在列表里，重复点击返回 `409`；
+  - 拉取失败写入 `status=failed` + `error`，控制台显示「失败」并在悬浮里给出原因；
+  - 页面刷新后继续轮询，不会丢进度；
+  - `JOBS_INLINE=1`（测试/开发）仍然同步完成，行为不变。
+- 前端改为每 4s 轮询「DSH 版本」列表，导出可见的「导入中 → 可用/失败」状态流转。
+
 ## [0.1.4] - 2026-11-19
 
 修复 `CONSOLE_BASE_DOMAIN` **从未被读取**的问题（0.1.3 只修了默认值来源，没修到这一层）。
@@ -152,6 +168,7 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.5]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.5
 [0.1.4]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.4
 [0.1.3]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.3
 [0.1.2]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.2

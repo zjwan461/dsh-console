@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Box } from '@element-plus/icons-vue'
 import { api, errorMessage, getCsrfToken } from '@/api/client'
@@ -107,12 +107,47 @@ async function refreshCatalog() {
   }
 }
 
+// A 1.3 GB pull takes minutes, so the API only reserves the row; poll until the
+// instance stops being `importing` instead of leaving a spinner with no feedback.
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+async function pollImport() {
+  stopPolling()
+  const rowsNow = rows.value.filter((row) => row.status === 'importing')
+  if (!rowsNow.length) return
+  pollTimer = setTimeout(async () => {
+    await load()
+    const failed = rows.value.find((row) => row.status === 'failed')
+    if (failed) {
+      ElMessage.error(`导入失败：${failed.error ?? failed.version}`)
+      stopPolling()
+      return
+    }
+    if (!rows.value.some((row) => row.status === 'importing')) {
+      const ready = rows.value.find((row) => row.status === 'ready')
+      ElMessage.success(ready ? `已导入 ${ready.version}` : '导入完成')
+      await loadCatalog()
+      stopPolling()
+      return
+    }
+    await pollImport()
+  }, 4000)
+}
+
 async function importTag(item: RemoteItem, asDefault = false) {
   importing.value = item.tag
   try {
     await api.post('/admin/images/remote/import', { tag: item.tag, is_default: asDefault })
-    ElMessage.success(`已导入 ${item.tag}`)
+    ElMessage.success(`已开始导入 ${item.tag}，可离开本页，进度见「DSH 版本」列表`)
     await Promise.all([load(), loadCatalog()])
+    await pollImport()
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -245,10 +280,14 @@ function sourceText(source: string) {
   return SOURCE_TEXT[source] ?? source
 }
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
   loadCatalog()
+  // A pull started before a refresh keeps running server-side; resume reporting.
+  if (rows.value.some((row) => row.status === 'importing')) await pollImport()
 })
+
+onUnmounted(stopPolling)
 </script>
 
 <template>
@@ -315,7 +354,18 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
-                <el-tag :type="tag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+                <el-tooltip
+                  v-if="row.status === 'failed' && row.error"
+                  :content="row.error"
+                  placement="top"
+                >
+                  <el-tag :type="tag(row.status)" size="small">
+                    {{ statusText(row.status) }}
+                  </el-tag>
+                </el-tooltip>
+                <el-tag v-else :type="tag(row.status)" size="small">
+                  {{ statusText(row.status) }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="大小" width="100">

@@ -186,38 +186,89 @@ def _decorate(db: Session, state: dict) -> dict:
     }
 
 
-def import_tag(db: Session, tag: str, *, is_default: bool, changelog: str = "") -> DshImage:
-    """Pull one published tag into the local daemon and register it."""
+def start_import(db: Session, tag: str, *, is_default: bool, changelog: str = "") -> DshImage:
+    """Reserve a row in `importing` state so the pull can run out of band.
+
+    Pulling a ~1.3 GB image takes minutes; keeping the HTTP request open meant the
+    console showed a spinner with no progress, and a page refresh started a second
+    pull. The row appears immediately, a duplicate click is rejected, and the
+    status flips to `ready`/`failed` when the pull finishes.
+    """
     state = _state(db)
     host = state.get("registry_host") or parse_repository(repository(db))[0]
     repo = state.get("repo_path") or parse_repository(repository(db))[1]
     full_ref = f"{host}/{repo}:{tag}"
 
-    known = db.query(DshImage).filter(DshImage.image_ref == full_ref).first()
-    if known is not None:
-        raise ApiError("IMAGE_DUPLICATE", "该版本已导入", 409)
+    if db.query(DshImage).filter(DshImage.image_ref == full_ref).first():
+        raise ApiError("IMAGE_DUPLICATE", "该版本已导入或正在导入", 409)
 
     parsed = split_tag(tag)
     version = parsed[0] if parsed else tag
     if not NAME_RE.match(f"{repo}:{tag}".replace(":", "_")):
         raise ApiError("VALIDATION_ERROR", "标签格式不正确", 422)
 
-    driver = get_driver()
-    try:
-        driver.pull(full_ref)
-        info = driver.image_info(full_ref)
-    except DriverError as exc:
-        raise ApiError("IMAGE_IMPORT_FAILED", str(exc), 422) from exc
-
-    return register(
-        db,
-        image_ref=full_ref,
+    if is_default:
+        db.query(DshImage).filter(DshImage.is_default.is_(True)).update(
+            {DshImage.is_default: False}
+        )
+    image = DshImage(
         version=version,
-        changelog=changelog or f"从 {repository(db)} 导入",
-        is_default=is_default,
+        image_ref=full_ref,
         source="pull",
-        info=info,
+        status=ImageStatus.importing,
+        is_default=is_default,
+        changelog=changelog or f"从 {repository(db)} 导入",
     )
+    db.add(image)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 - unique constraint race
+        db.rollback()
+        raise ApiError("IMAGE_DUPLICATE", "该版本已导入或正在导入", 409) from None
+    db.refresh(image)
+    return image
+
+
+def finish_import(image_id: int) -> None:
+    """Background half of `start_import`: pull, then record success or failure."""
+    from ..db import SessionLocal
+
+    with SessionLocal() as db:
+        image = db.get(DshImage, image_id)
+        if image is None:
+            return
+        driver = get_driver()
+        try:
+            driver.pull(image.image_ref)
+            info = driver.image_info(image.image_ref)
+        except Exception as exc:  # noqa: BLE001 - any failure is recorded, not raised
+            image.status = ImageStatus.failed
+            image.error = str(exc)[:500]
+            db.commit()
+            log.warning("image import failed for %s: %s", image.image_ref, exc)
+            return
+        image.status = ImageStatus.ready
+        image.error = None
+        image.digest = info.get("digest")
+        image.size_bytes = info.get("size", 0)
+        image.arch = info.get("arch", "amd64")
+        image.labels = info.get("labels")
+        db.commit()
+        log.info("image import finished: %s", image.image_ref)
+        try:
+            catalog(db, refresh=True)
+        except Exception:  # noqa: BLE001 - the image is usable either way
+            log.warning("catalog refresh after import failed", exc_info=True)
+
+
+def import_tag(db: Session, tag: str, *, is_default: bool, changelog: str = "") -> DshImage:
+    """Pull one published tag into the local daemon and register it (synchronous)."""
+    image = start_import(db, tag, is_default=is_default, changelog=changelog)
+    finish_import(image.id)
+    db.refresh(image)
+    if image.status != ImageStatus.ready:
+        raise ApiError("IMAGE_IMPORT_FAILED", image.error or "导入失败", 422)
+    return image
 
 
 def register(
