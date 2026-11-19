@@ -24,12 +24,11 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 from sqlalchemy.schema import CreateColumn
-
-from alembic import command
 
 from .config import settings
 from .db import Base, engine

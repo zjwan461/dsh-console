@@ -30,7 +30,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<9", "ruff>=0.7,<0.9", "fakeredis>=2.26,<3"]
+# Pinned: the linter's rule set changes between releases, and "green locally, red
+# in CI" is always a version skew. CI installs exactly this.
+dev = ["pytest>=8.3,<9", "ruff==0.8.6", "fakeredis>=2.26,<3"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -46,6 +48,12 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["B008"]
+
+[tool.ruff.lint.isort]
+# `api/alembic` is a migrations directory, not an importable package root, but
+# ruff would otherwise treat the name as first-party and split alembic's imports
+# across two blocks.
+known-third-party = ["alembic"]
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/*" = ["E501", "I001"]
