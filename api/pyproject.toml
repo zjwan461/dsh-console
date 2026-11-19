@@ -1,6 +1,8 @@
 [project]
 name = "dsh-console-api"
-version = "0.1.0"
+# Read from app/version.py so the package metadata, the FastAPI app and
+# /system/health can never disagree.
+dynamic = ["version"]
 description = "DSH cloud console control plane"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -40,6 +42,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["app", "app.routers", "app.services"]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.version.__version__" }
 
 [tool.ruff]
 line-length = 100

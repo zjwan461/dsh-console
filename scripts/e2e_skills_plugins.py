@@ -192,7 +192,6 @@ def main() -> None:
             "'plugins','plugin_revisions','plugin_grants');",
         ],
     )
-    numbers = [line.strip() for line in out.splitlines() if line.strip().isdigit() or "c9f1" in line]
     check("migration at head", any("c9f1a2b3d4e5" in line for line in out.splitlines()), out[:200])
     check("7 new tables", any(line.strip() == "7" for line in out.splitlines()), out[-200:])
 

@@ -90,6 +90,12 @@ LOG_LEVEL=INFO
 # TLS: internal_ca（默认，离线可用）。acme 在 M2 与动态路由一起接入。
 CONSOLE_TLS_MODE=internal_ca
 
+# 对外协议/端口。默认 443/80 时不用填 PUBLIC_PORT；跑在非标准端口（如 http:38080）
+# 时必须填 —— 它同时进入实例地址、/go 跳转和 DSH 的 trusted-host 围栏，三处不一致
+# 的表现是「实例页面卡在 Loading plugins」或跳转到一个打不开的地址。
+# PUBLIC_SCHEME=http
+# PUBLIC_PORT=38080
+
 # ── 安全（必须改，且备份 master key！）────────────────
 SESSION_SECRET=<32B base64url>        # 会话/CSRF HMAC
 MASTER_KEY=<32B base64>               # 模型 Key AES-256-GCM；丢失=所有 Key 不可解
@@ -313,9 +319,23 @@ docker compose up -d
 docker compose logs -f console-api | grep -E 'alembic|ready'
 ```
 
+按版本锁定的镜像：
+
+```bash
+# .env 里把 :latest 换成具体版本，回滚就是改回去再 pull
+CONSOLE_API_IMAGE=ghcr.io/zjwan461/dsh-console-api:v0.1.0
+CONSOLE_WEB_IMAGE=ghcr.io/zjwan461/dsh-console-web:v0.1.0
+```
+
+可用的 tag：`v0.1.0`（完整版本）、`0.1`（次版本浮动）、`sha-<commit>`（精确提交）、
+`latest`（默认分支最新）。版本变更见 [CHANGELOG](../CHANGELOG.md)。
+
 - API 启动时自动 `alembic upgrade head`；破坏性迁移分成两个版本发布（先加列，再删列）。
 - 升级控制面**不影响**运行中的实例（容器独立）。
 - 升级 dsh 版本：导入新镜像 → 设默认 → 用户自选或管理员批量迁移（M4 起）。
+- 换镜像后如果实例界面卡在 `Loading plugins`，看容器日志有没有
+  `entries did not activate`：那是旧镜像的插件块残留，控制台的 reconcile
+  （每 60s）会自动清理，重启实例即可。
 
 ## 8. 日常运维
 

@@ -31,7 +31,11 @@ x-api-env: &api-env
   CADDY_ENABLED: "1"
   CADDY_ADMIN_URL: http://console-web:2019
   CADDY_ACCESS_LOG_ENABLED: "1"
-  PUBLIC_SCHEME: https
+  PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
+  # Only needed when the console is not reached on the scheme's default port.
+  # It goes into instance URLs, the /go redirect and DSH's trusted-host fence,
+  # so a mismatch shows up as an unreachable instance or a rejected websocket.
+  PUBLIC_PORT: ${PUBLIC_PORT:-}
   JOBS_INLINE: "0"
   STATS_INTERVAL_SECONDS: ${STATS_INTERVAL_SECONDS:-30}
   USAGE_FLUSH_SECONDS: ${USAGE_FLUSH_SECONDS:-60}

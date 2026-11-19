@@ -9,6 +9,7 @@
 ![fastapi](https://img.shields.io/badge/FastAPI-0.115-009688)
 ![docker](https://img.shields.io/badge/Docker-Engine-2496ed)
 ![license](https://img.shields.io/badge/license-Apache%202.0-2f6f63)
+![version](https://img.shields.io/badge/version-0.1.0-a9713f)
 
 ![登录页](docs/images/login.jpg)
 
@@ -227,6 +228,8 @@ $EDITOR scripts/.remote.env                          # 填自己的 Docker/MySQL
 | [06 路线图与风险](docs/06-roadmap.md) | 里程碑、验收、二期 GPU 方案、风险登记、待确认项 |
 | [07 前端设计](docs/07-frontend.md) | 路由与页面、布局、状态管理、关键交互、工程结构 |
 | [08 Skill 与插件管理](docs/08-skill-plugin-management.md) | 平台技能仓库、用户启用、物化与热重载；插件目录、合并根、patch 管理、兼容与回滚 |
+
+版本变更见 [CHANGELOG](CHANGELOG.md)；当前版本 **v0.1.0**。
 
 ## 目录结构
 

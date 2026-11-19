@@ -13,6 +13,7 @@ from ..models import Role, User
 from ..redis import redis_ok
 from ..security import utcnow
 from ..services.settings import get_setting
+from ..version import __version__
 
 router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(csrf_guard)])
 
@@ -89,7 +90,7 @@ def health(request: Request, _: User = Depends(require_admin), db: Session = Dep
             "docker": docker,
             "caddy": caddy,
             "capacity": capacity,
-            "version": "0.2.0",
+            "version": __version__,
         },
     )
 

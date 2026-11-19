@@ -203,7 +203,7 @@ def main() -> None:
         NET_CONSOLE: {"Aliases": ["console-api"]},
         NET_EDGE: {},
     }
-    api_id = run_container(
+    run_container(
         "console-api",
         {
             "Image": API_IMAGE,

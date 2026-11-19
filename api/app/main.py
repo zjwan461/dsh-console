@@ -41,6 +41,7 @@ from .routers import (
 )
 from .security import new_request_id
 from .seed import seed_all
+from .version import __version__
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -93,7 +94,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="DSH Console API",
-    version="0.1.0",
+    version=__version__,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
