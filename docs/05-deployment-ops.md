@@ -311,6 +311,45 @@ curl -X POST .../admin/system/reconcile
 
 ## 7. 升级
 
+### 7.1 用 CI 镜像（推荐）
+
+`.env` 里填镜像 tag，拉新再起：
+
+```bash
+cd /srv/dsh-console
+docker compose pull console-api console-web
+docker compose up -d
+docker compose logs -f console-api | grep -E 'alembic|ready'
+```
+
+**`docker compose up -d` 单独执行不会重新拉镜像**——本地已经有同名 tag 时它直接复用。
+必须先 `pull`（或 `up -d --pull always`），否则改了 tag 也不会生效。
+
+镜像 tag 由 workflow 生成，**没有 `v` 前缀**（git tag 是 `v0.1.1`，镜像 tag 是 `0.1.1`）：
+
+| tag | 何时更新 | 用途 |
+|---|---|---|
+| `latest` | **每次推 `main`** | 跟主分支最新，可能领先于最近一次正式发布 |
+| `0.1.1` | 推 `v0.1.1` tag 时 | 完整版本，**生产建议锁定这个** |
+| `0.1` | 推 `v0.1.x` tag 时 | 次版本浮动，收补丁自动跟进 |
+| `main` | 每次推 `main` | 与 `latest` 同源，供调试对照 |
+| `sha-<40 位 commit>` | 每次构建 | 精确到提交，排障用 |
+
+```ini
+# 锁定版本
+CONSOLE_API_IMAGE=ghcr.io/zjwan461/dsh-console-api:0.1.1
+CONSOLE_WEB_IMAGE=ghcr.io/zjwan461/dsh-console-web:0.1.1
+
+# 或跟最新（注意可能含未发布改动）
+# CONSOLE_API_IMAGE=ghcr.io/zjwan461/dsh-console-api:latest
+# CONSOLE_WEB_IMAGE=ghcr.io/zjwan461/dsh-console-web:latest
+```
+
+回滚就是改回旧 tag 再 `pull && up -d`；数据库迁移是单向的，跨大版本回滚前先看
+[CHANGELOG](../CHANGELOG.md) 有没有破坏性变更。
+
+### 7.2 本地构建
+
 ```bash
 cd /srv/dsh-console
 git pull
@@ -318,17 +357,6 @@ docker compose build console-api console-web
 docker compose up -d
 docker compose logs -f console-api | grep -E 'alembic|ready'
 ```
-
-按版本锁定的镜像：
-
-```bash
-# .env 里把 :latest 换成具体版本，回滚就是改回去再 pull
-CONSOLE_API_IMAGE=ghcr.io/zjwan461/dsh-console-api:v0.1.0
-CONSOLE_WEB_IMAGE=ghcr.io/zjwan461/dsh-console-web:v0.1.0
-```
-
-可用的 tag：`v0.1.0`（完整版本）、`0.1`（次版本浮动）、`sha-<commit>`（精确提交）、
-`latest`（默认分支最新）。版本变更见 [CHANGELOG](../CHANGELOG.md)。
 
 - API 启动时自动 `alembic upgrade head`；破坏性迁移分成两个版本发布（先加列，再删列）。
 - 升级控制面**不影响**运行中的实例（容器独立）。
