@@ -3,14 +3,19 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Runtime configuration. Every deployment-specific value is an env var."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     app_name: str = "DSH Console"
     env: str = "dev"
@@ -30,7 +35,13 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     session_ttl_days: int = 7
 
-    base_domain: str = "dsh.example.com"
+    # `CONSOLE_BASE_DOMAIN` is what `.env.example` and compose.yaml set, but the
+    # field name would otherwise only answer to `BASE_DOMAIN` — the documented
+    # variable was silently ignored and Caddy kept using the default domain.
+    base_domain: str = Field(
+        default="dsh.example.com",
+        validation_alias=AliasChoices("CONSOLE_BASE_DOMAIN", "BASE_DOMAIN"),
+    )
     console_name: str = "优墨云舱"
     # Public port the console is reached on when it is not the scheme default
     # (a test host on :38080, for instance). Instance URLs, the /go redirect and

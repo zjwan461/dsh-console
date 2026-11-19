@@ -5,6 +5,23 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.4] - 2026-11-19
+
+修复 `CONSOLE_BASE_DOMAIN` **从未被读取**的问题（0.1.3 只修了默认值来源，没修到这一层）。
+
+### 修复
+
+- **环境变量名与字段名不匹配**：字段叫 `base_domain`，pydantic 只查 `BASE_DOMAIN`；
+  而 `.env.example` 和 `compose.yaml` 传的都是 `CONSOLE_BASE_DOMAIN`。
+  结果是无论怎么配，`settings.base_domain` 永远是内置默认值 `dsh.example.com`，
+  Caddy 也只给 `console.dsh.example.com` 签证书——真实域名在 TLS 握手阶段直接失败
+  （`TLSV1_ALERT_INTERNAL_ERROR`）。
+  现在两个名字都接受（`AliasChoices`），`CONSOLE_NAME` 这类本就匹配的变量不受影响。
+- 新增 4 条回归用例覆盖两种变量名、默认值与字段名直传。
+
+> 这个 bug 从 0.1.0 就存在。之前一直没暴露，是因为测试机用的正是默认域名
+> `dsh.example.com`，配不配都一样。
+
 ## [0.1.3] - 2026-11-19
 
 修复 `CONSOLE_BASE_DOMAIN` **完全不生效**的问题——部署到自己的域名后，控制台仍然只
@@ -135,6 +152,7 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.4]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.4
 [0.1.3]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.3
 [0.1.2]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.2
 [0.1.1]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.1
