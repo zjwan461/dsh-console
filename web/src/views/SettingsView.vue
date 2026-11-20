@@ -7,6 +7,12 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const tab = ref('profile')
+
+// Grants change on the admin side; re-read them whenever the tab is opened so the
+// list is never a stale "暂无可用技能" from a previous visit.
+function onTabChange(name: string | number) {
+  if (name === 'skills') void loadSkills()
+}
 const savingProfile = ref(false)
 const savingPassword = ref(false)
 const savingKey = ref(false)
@@ -31,15 +37,19 @@ interface MySkill {
 }
 const mySkills = ref<MySkill[]>([])
 const skillsSaving = ref(false)
+const skillsLoading = ref(false)
 const skillsLoaded = ref(false)
 
 async function loadSkills() {
+  skillsLoading.value = true
   try {
     const data = await api.get<{ items: MySkill[] }>('/me/skills')
     mySkills.value = data.items
     skillsLoaded.value = true
   } catch (error) {
     ElMessage.error(errorMessage(error))
+  } finally {
+    skillsLoading.value = false
   }
 }
 
@@ -208,7 +218,7 @@ onMounted(() => {
     </div>
 
     <div class="card">
-      <el-tabs v-model="tab">
+      <el-tabs v-model="tab" @tab-change="onTabChange">
         <el-tab-pane label="资料" name="profile">
           <el-form label-width="110px" style="max-width: 520px">
             <el-form-item label="用户名">
@@ -345,7 +355,12 @@ onMounted(() => {
               <el-icon><Star /></el-icon>
             </div>
             <strong>暂无可用技能</strong>
-            管理员开放技能后会出现在这里
+            管理员开放技能后会出现在这里（技能需要先「发布」，再设置「开放范围」）
+            <div style="margin-top: 12px">
+              <el-button size="small" :loading="skillsLoading" @click="loadSkills">
+                刷新
+              </el-button>
+            </div>
           </div>
 
           <template v-else>

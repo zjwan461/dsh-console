@@ -367,8 +367,17 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="开放范围" width="120">
-          <template #default="{ row }">{{ grantText(row) }}</template>
+        <el-table-column label="开放范围" width="150">
+          <template #default="{ row }">
+            <el-tooltip
+              v-if="row.status !== 'published' && (row.grants?.length ?? 0) > 0"
+              content="已设置开放范围，但技能还没发布，用户看不到。点「发布」后才生效"
+              placement="top"
+            >
+              <el-tag type="warning" size="small">已开放·未发布</el-tag>
+            </el-tooltip>
+            <span v-else>{{ grantText(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="版本" width="70">
           <template #default="{ row }">r{{ row.revision ?? '—' }}</template>
