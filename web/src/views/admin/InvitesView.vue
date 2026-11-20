@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
+import { formatDateTime } from '@/utils/datetime'
 import type { Invite } from '@/types'
 
 const loading = ref(false)
@@ -101,7 +102,9 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="过期时间" width="180">
           <template #default="{ row }">
-            <span class="muted">{{ row.expires_at?.replace('T', ' ').slice(0, 16) ?? '永久' }}</span>
+            <span class="muted">{{
+              row.expires_at ? formatDateTime(row.expires_at) : '永久'
+            }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="note" label="备注" min-width="140" />

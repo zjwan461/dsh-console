@@ -43,8 +43,16 @@ def _add_tree(tar: tarfile.TarFile, source: str, arcname: str) -> int:
     if not os.path.isdir(source):
         return count
     for root, dirs, files in os.walk(source):
-        dirs[:] = [d for d in dirs if d not in EXCLUDES]
+        # Compare relative paths, not bare names: `node_modules/.cache` is a path,
+        # so matching it against a directory name never excluded anything.
         rel = os.path.relpath(root, source)
+        kept = []
+        for name in dirs:
+            relative = name if rel == "." else os.path.join(rel, name)
+            if name in EXCLUDES or relative.replace(os.sep, "/") in EXCLUDES:
+                continue
+            kept.append(name)
+        dirs[:] = kept
         target = arcname if rel == "." else os.path.join(arcname, rel)
         tar.add(root, arcname=target, recursive=False)
         for name in files:
@@ -176,27 +184,52 @@ def restore(db: Session, snapshot: Snapshot) -> None:
 
 
 def _safe_extract(tar: tarfile.TarFile, root: str) -> None:
+    """Extract while refusing anything that would escape `root`.
+
+    Symlinks are validated on the *link itself*, not on its target: a snapshot
+    taken after an image switch can legitimately contain links into the image
+    (e.g. `profiles/node_modules/<plugin>`), and some of those targets may no
+    longer exist. Resolving them here would both reject valid archives and raise
+    on dangling links.
+    """
     base = os.path.realpath(root)
     for member in tar:
-        target = os.path.realpath(os.path.join(root, member.name))
+        destination = os.path.join(root, member.name)
+        if member.issym() or member.islnk():
+            link = member.linkname
+            if os.path.isabs(link):
+                raise RuntimeError(f"absolute link in snapshot: {member.name}")
+            # The link must stay inside the extraction root when resolved
+            # relative to the directory that will contain it.
+            resolved = os.path.realpath(os.path.join(os.path.dirname(destination), link))
+            if not (resolved == base or resolved.startswith(base + os.sep)):
+                raise RuntimeError(f"unsafe link in snapshot: {member.name} -> {link}")
+            target = os.path.realpath(os.path.dirname(destination))
+        else:
+            target = os.path.realpath(destination)
         if not (target == base or target.startswith(base + os.sep)):
             raise RuntimeError(f"unsafe path in snapshot: {member.name}")
         tar.extract(member, root)
 
 
 def _fix_owner(root: str) -> None:
-    if not hasattr(os, "chown"):
+    """Give the restored tree back to the instance uid.
+
+    Uses `lchown` so a symlink is re-owned instead of its target, and skips any
+    entry that vanished — a dangling link must not fail the whole restore.
+    """
+    chown = getattr(os, "lchown", None) or getattr(os, "chown", None)
+    if chown is None:
         return
     for current, _dirs, files in os.walk(root):
-        try:
-            os.chown(current, settings.instance_uid, settings.instance_gid)
-        except PermissionError:
-            return
-        for name in files:
+        for path in (current, *(os.path.join(current, name) for name in files)):
             try:
-                os.chown(os.path.join(current, name), settings.instance_uid, settings.instance_gid)
+                chown(path, settings.instance_uid, settings.instance_gid)
             except PermissionError:
                 return
+            except OSError:
+                # Broken symlink / concurrently removed entry: harmless.
+                log.debug("skip chown for %s", path)
 
 
 def delete(db: Session, snapshot: Snapshot) -> None:

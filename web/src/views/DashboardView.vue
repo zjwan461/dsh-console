@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Calendar, Cpu, Coin, Timer } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
@@ -43,7 +44,7 @@ function gb(mb: number) {
 }
 
 function shortDate(value: string | null) {
-  return value ? value.replace('T', ' ').slice(0, 16) : '—'
+  return value ? formatDateTime(value) : '—'
 }
 
 async function load() {
@@ -133,14 +134,14 @@ onUnmounted(() => store.stopPolling())
         <el-button
           v-else-if="store.isRunning"
           type="primary"
-          :loading="store.busy"
+          :loading="store.pendingLaunch || store.busy"
           @click="openInstance"
         >
           打开云舱
         </el-button>
         <el-button
           v-else
-          :loading="store.busy"
+          :loading="store.pendingLaunch || store.busy"
           :disabled="store.isTransitional"
           @click="openInstance"
         >
@@ -214,7 +215,7 @@ onUnmounted(() => store.stopPolling())
                 size="small"
                 style="margin-left: 8px"
               >
-                插件变更，待重启
+                配置变更，待重启
               </el-tag>
             </div>
             <div v-if="instance" class="instance-url mono">
@@ -232,15 +233,35 @@ onUnmounted(() => store.stopPolling())
                 instance.status !== 'error'
               "
               :disabled="store.isTransitional"
+              :loading="store.pendingAction === 'stop'"
               @click="act('stop')"
             >
               停止
             </el-button>
-            <el-button v-else type="primary" :disabled="store.isTransitional" @click="act('start')">
+            <el-button
+              v-else
+              type="primary"
+              :disabled="store.isTransitional"
+              :loading="store.pendingAction === 'start'"
+              @click="act('start')"
+            >
               启动
             </el-button>
-            <el-button :disabled="store.isTransitional" @click="act('restart')">重启</el-button>
-            <el-button type="danger" plain @click="removeInstance">删除</el-button>
+            <el-button
+              :disabled="store.isTransitional"
+              :loading="store.pendingAction === 'restart'"
+              @click="act('restart')"
+            >
+              重启
+            </el-button>
+            <el-button
+              type="danger"
+              plain
+              :loading="store.pendingAction === 'remove'"
+              @click="removeInstance"
+            >
+              删除
+            </el-button>
           </div>
         </div>
 

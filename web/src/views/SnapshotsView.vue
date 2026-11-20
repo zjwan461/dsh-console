@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 
@@ -109,7 +110,11 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'ready' ? 'success' : row.status === 'failed' ? 'danger' : 'info'">
+            <el-tag
+              :type="
+                row.status === 'ready' ? 'success' : row.status === 'failed' ? 'danger' : 'info'
+              "
+            >
               {{ row.status }}
             </el-tag>
           </template>
@@ -119,7 +124,7 @@ onMounted(load)
         </el-table-column>
         <el-table-column prop="dsh_version" label="版本" width="140" />
         <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ row.created_at.replace('T', ' ').slice(0, 16) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
@@ -138,9 +143,7 @@ onMounted(load)
           <el-input v-model="form.note" maxlength="200" placeholder="例如：装好依赖后" />
         </el-form-item>
       </el-form>
-      <p class="muted" style="font-size: 12px">
-        创建时实例会短暂停止，完成后自动恢复运行。
-      </p>
+      <p class="muted" style="font-size: 12px">创建时实例会短暂停止，完成后自动恢复运行。</p>
       <template #footer>
         <el-button @click="visible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="submit">创建</el-button>

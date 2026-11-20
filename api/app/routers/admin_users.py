@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..audit import write_audit
+from ..config import settings
 from ..db import get_db
 from ..deps import client_ip, csrf_guard, require_admin
 from ..errors import ApiError, envelope
-from ..models import Plan, Role, User, UserQuota, UserSession, UserStatus
+from ..models import Instance, Plan, Role, User, UserQuota, UserSession, UserStatus
 from ..pagination import Page, paginated
 from ..schemas import ResetPasswordIn, UserCreateIn, UserPatchIn, iso
 from ..security import hash_password, utcnow
+from ..services.instances import apply_plan, restart_instance
 from ..services.quota import current_cycle, effective
 
 router = APIRouter(prefix="/admin/users", tags=["admin:users"], dependencies=[Depends(csrf_guard)])
@@ -166,6 +168,7 @@ def patch_user(
     user_id: int,
     payload: UserPatchIn,
     request: Request,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -174,6 +177,7 @@ def patch_user(
         raise ApiError("NOT_FOUND", "用户不存在", 404)
 
     changes: dict = {}
+    restart_id: int | None = None
     if payload.plan_id is not None and payload.plan_id != 0:
         plan = db.get(Plan, payload.plan_id)
         if plan is None:
@@ -183,6 +187,21 @@ def patch_user(
         if quota:
             quota.plan_id = plan.id
         changes["plan_id"] = plan.id
+        # The instance keeps the shape it was created with, and Docker cannot
+        # resize a live container — without this the new plan only showed up in
+        # the quota card while the container kept running with the old limits.
+        instance = db.query(Instance).filter(Instance.user_id == user.id).first()
+        if instance is not None and apply_plan(
+            db,
+            instance,
+            cpu_cores=float(plan.cpu_cores),
+            memory_mb=plan.memory_mb,
+            disk_gb=plan.disk_gb,
+        ):
+            changes["instance_spec"] = f"{plan.cpu_cores}C/{plan.memory_mb}MB"
+            if instance.container_id:
+                restart_id = instance.id
+                changes["instance_restarted"] = True
     if payload.display_name is not None:
         user.display_name = payload.display_name
         changes["display_name"] = payload.display_name
@@ -234,6 +253,12 @@ def patch_user(
     if changes:
         write_audit(db, request, admin, "admin.user_update", "user", user.id, changes)
     db.commit()
+    if restart_id is not None:
+        # Re-create the container so the new limits are real, not just displayed.
+        if settings.jobs_inline:
+            restart_instance(restart_id, admin.id)
+        else:
+            background.add_task(restart_instance, restart_id, admin.id)
     return envelope(request, _row(db, user))
 
 

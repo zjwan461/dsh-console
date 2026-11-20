@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.orm import Session
 
 from ..audit import write_audit
+from ..config import settings
 from ..db import get_db
 from ..deps import csrf_guard, current_user
 from ..errors import ApiError, envelope
@@ -45,15 +46,21 @@ def list_images(
 def commit_image(
     payload: ImageCommitIn,
     request: Request,
+    background: BackgroundTasks,
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     instance = get_instance(db, user.id)
     if instance is None:
         raise ApiError("INSTANCE_NOT_FOUND", "还没有实例", 404)
-    image = service.commit(db, user, instance, payload.name, payload.note)
+    image = service.start_commit(db, user, instance, payload.name, payload.note)
     write_audit(db, request, user, "image.commit", "user_image", image.id, {"name": image.name})
     db.commit()
+    if settings.jobs_inline:
+        service.finish_commit(image.id)
+        db.refresh(image)
+    else:
+        background.add_task(service.finish_commit, image.id)
     return envelope(request, _view(image))
 
 

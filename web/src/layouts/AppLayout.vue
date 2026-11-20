@@ -22,6 +22,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
+import TopProgress from '@/components/TopProgress.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -92,6 +93,7 @@ onMounted(async () => {
 
 <template>
   <div class="shell">
+    <TopProgress />
     <aside class="aside">
       <router-link to="/" class="brand">
         <span class="brand-mark">墨</span>

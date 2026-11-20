@@ -3,7 +3,12 @@ export class ApiError extends Error {
   status: number
   details: Record<string, unknown>
 
-  constructor(code: string, message: string, status: number, details: Record<string, unknown> = {}) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details: Record<string, unknown> = {},
+  ) {
     super(message)
     this.code = code
     this.status = status
@@ -27,6 +32,20 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+// A tiny in-flight counter lets the shell show one global progress bar instead of
+// every page having to remember to render its own spinner.
+let inFlight = 0
+
+function trackStart() {
+  inFlight += 1
+  if (inFlight === 1) window.dispatchEvent(new CustomEvent('api:busy', { detail: true }))
+}
+
+function trackEnd() {
+  inFlight = Math.max(0, inFlight - 1)
+  if (inFlight === 0) window.dispatchEvent(new CustomEvent('api:busy', { detail: false }))
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET'
   const headers: Record<string, string> = { ...options.headers }
@@ -37,12 +56,18 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     headers['X-CSRF-Token'] = csrfToken
   }
 
-  const response = await fetch(`/api/v1${path}`, {
-    method,
-    credentials: 'include',
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  })
+  trackStart()
+  let response: Response
+  try {
+    response = await fetch(`/api/v1${path}`, {
+      method,
+      credentials: 'include',
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    })
+  } finally {
+    trackEnd()
+  }
 
   if (response.status === 204) {
     return undefined as T

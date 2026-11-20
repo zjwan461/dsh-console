@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Cpu, Monitor, Timer, UserFilled } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import LineChart from '@/components/LineChart.vue'
+import { formatShortDateTime } from '@/utils/datetime'
 
 interface Overview {
   users: { total: number; active_7d: number }
@@ -33,7 +34,7 @@ const node = ref<
 >([])
 const top = ref<Array<{ key: string; value: number }>>([])
 
-const nodeLabels = computed(() => node.value.map((p) => p.ts.slice(5, 16).replace('T', ' ')))
+const nodeLabels = computed(() => node.value.map((p) => formatShortDateTime(p.ts)))
 const nodeCpu = computed(() => node.value.map((p) => p.cpu_percent))
 const nodeMem = computed(() =>
   node.value.map((p) =>

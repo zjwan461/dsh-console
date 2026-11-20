@@ -5,6 +5,60 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.7] - 2026-11-20
+
+一组体验与正确性修复：首启慢不再被判「失败」、慢接口不再让页面看起来卡死、
+快照恢复不再被悬空链接打断、保存镜像改为异步、**改套餐会真正改变容器规格**、
+时间按本地时区显示。
+
+### 修复
+
+- **首启超时被误判为失败**：`wait_healthy` 原本固定等 90 秒，而 dsh 首次启动要组合
+  profile、生成 bind overlay，慢机器上超过 90 秒很常见——容器其实稍后就正常了，
+  控制台却已经标成「异常」。现在：
+  - 等待时长改为 `INSTANCE_HEALTH_TIMEOUT`（默认 **300 秒**）；
+  - 更关键的是 `error` **不再是终态**：reconcile 每 60 秒复检，容器已 running 且
+    healthy 就自动恢复成「运行中」，并记一条 `recovered` 事件，不需要人工重启。
+- **改套餐只改了配额，没改容器**：`PATCH /admin/users` 改 `plan_id` 时只更新了
+  `users.plan_id` 和 `user_quotas.plan_id`，实例里的 `cpu_cores/memory_mb/disk_gb`
+  仍是创建时的快照，容器也从未重建——于是「配额页显示 4C/8G，实际跑的仍是 1C/2G」。
+  现在会同步实例规格并**重建容器**（Docker 不支持在线改 `--cpus/--memory`），
+  重启在后台执行，实例事件里留下 `plan_applied`。
+- **快照恢复被悬空符号链接打断**：`_fix_owner` 用 `os.chown` 改属主，会跟随符号链接；
+  换镜像后残留的 `profiles/node_modules/<旧插件>` 是悬空链接，抛 `ENOENT`，而代码只
+  捕获了 `PermissionError`，整次恢复失败。改用 `os.lchown`（改链接本身）并逐项容忍
+  `OSError`；`_safe_extract` 对链接的越界校验也从「解析目标」改成「校验链接本身」，
+  既不再误伤，也没有放松安全边界（绝对链接与 `../` 逃逸仍然拒绝）。
+- **保存镜像傻等**：`docker commit` 在请求里同步执行，几 GB 的容器要几分钟。
+  现在接口立即返回 `202`，行以 `committing` 落库、后台提交，前端每 4s 轮询显示
+  「保存中 → 可用/失败」，失败原因悬浮可见，刷新页面不丢进度。
+- **按钮傻等**：实例启停/重启/删除、管理端强制启停、打开云舱等操作的按钮现在各自
+  显示 loading，其它按钮同时禁用；另外新增全局顶部进度条（`TopProgress`），
+  任何接口请求超过 180ms 就出现，1 秒内不闪。
+- **「设为默认」点了没反应**：`setDefault` / `toggle` / `remove` 在成功后会
+  `await loadCatalog()`，而它会走网络拉 GHCR 的仓库清单，缓存过期时能卡十几秒，
+  期间按钮毫无反馈。现在三个按钮各自 loading、同行其它按钮临时禁用，成功后只等
+  本地列表刷新，仓库清单改为后台异步刷新，不再阻塞交互；`remove` 的「取消」也不再
+  被当成错误。
+- **时间显示是 UTC，不是本地时间**：后端一直返回带 `Z` 的 UTC，前端却用
+  `replace('T',' ').slice(0,16)` 直接截字符串，于是 11:42 显示成 03:42。新增
+  `web/src/utils/datetime.ts`，用浏览器本地时区渲染，替换了 13 个页面共 19 处；
+  顺带补上 `files.py` 里唯一漏掉 `Z` 的 `modified_at`（否则会按本地时间解析，反方向差 8 小时）。
+- 顺带修掉 `EXCLUDES` 里的死代码：`node_modules/.cache` 之前按目录名比较，永远匹配
+  不上，快照里一直带着这份缓存。
+
+### 变更
+
+- 「待重启」徽标文案从「插件变更」改为「配置变更」，规格调整也适用。
+
+### 新增
+
+- `INSTANCE_HEALTH_TIMEOUT` 配置项。
+- reconcile 返回值新增 `recovered` 计数。
+- 前端 `formatDateTime` / `formatShortDateTime` / `formatBucket` 三个时间格式化工具。
+- 回归用例 12 条：超时后自愈、真故障不乱改、超时可配、快照悬空链接/越界/缓存排除、
+  镜像异步提交与失败落库、套餐变更改规格。
+
 ## [0.1.6] - 2026-11-19
 
 让实例启动失败时**直接看得见原因**，而不是只有一句 `container did not become healthy`。
@@ -181,6 +235,7 @@ Redis 与 `dsh-docker` 镜像上完成端到端回归。
 - 生产加固未验证：HTTPS + 自有域名、备份恢复演练、故障演练（杀进程、磁盘写满、OOM）、
   压测与 inotify 上限。
 
+[0.1.7]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.7
 [0.1.6]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.6
 [0.1.5]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.5
 [0.1.4]: https://github.com/zjwan461/dsh-console/releases/tag/v0.1.4

@@ -16,7 +16,15 @@ log = logging.getLogger("dsh.user-images")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 
 
-def commit(db: Session, user: User, instance: Instance, name: str, note: str = "") -> UserImage:
+def start_commit(
+    db: Session, user: User, instance: Instance, name: str, note: str = ""
+) -> UserImage:
+    """Validate and reserve the row; the commit itself runs out of band.
+
+    `docker commit` on a multi-GB container takes minutes, so the HTTP request
+    used to hang with nothing but a spinner. The row now appears immediately as
+    `committing`, the UI polls it, and a duplicate name is rejected right away.
+    """
     if not NAME_RE.match(name):
         raise ApiError("VALIDATION_ERROR", "镜像名需为 2-31 位小写字母/数字/连字符", 422)
     if instance.container_id is None:
@@ -30,33 +38,70 @@ def commit(db: Session, user: User, instance: Instance, name: str, note: str = "
         raise ApiError("IMAGE_DUPLICATE", "同名镜像已存在", 409)
 
     tag = f"dsh-user/{user.id}:{name}-{int(time.time())}"
-    changes = [
-        "ENV DEEPSEEK_API_KEY=",
-        "ENV LITELLM_API_KEY=",
-        "LABEL dsh.console.user_image=true",
-        f"LABEL dsh.console.owner={user.id}",
-        f"LABEL dsh.console.base_version={instance.dsh_version}",
-    ]
-    try:
-        digest = get_driver().commit(instance.container_id, tag, changes)
-        info = get_driver().image_info(tag)
-    except DriverError as exc:
-        raise ApiError("IMAGE_IMPORT_FAILED", str(exc), 422) from exc
-
     image = UserImage(
         user_id=user.id,
         instance_id=instance.id,
         name=name,
         image_ref=tag,
-        digest=info.get("digest") or digest,
-        size_bytes=info.get("size", 0),
         base_version=instance.dsh_version,
-        status=UserImageStatus.ready,
+        status=UserImageStatus.committing,
         note=note[:200],
     )
     db.add(image)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 - unique constraint race on the name
+        db.rollback()
+        raise ApiError("IMAGE_DUPLICATE", "同名镜像已存在", 409) from None
     db.refresh(image)
+    return image
+
+
+def finish_commit(image_id: int) -> None:
+    """Background half: commit the container, then record success or failure."""
+    from ..db import SessionLocal
+
+    with SessionLocal() as db:
+        image = db.get(UserImage, image_id)
+        if image is None:
+            return
+        instance = db.get(Instance, image.instance_id)
+        if instance is None or instance.container_id is None:
+            image.status = UserImageStatus.failed
+            image.error = "实例容器已不存在"
+            db.commit()
+            return
+        changes = [
+            "ENV DEEPSEEK_API_KEY=",
+            "ENV LITELLM_API_KEY=",
+            "LABEL dsh.console.user_image=true",
+            f"LABEL dsh.console.owner={image.user_id}",
+            f"LABEL dsh.console.base_version={image.base_version}",
+        ]
+        try:
+            digest = get_driver().commit(instance.container_id, image.image_ref, changes)
+            info = get_driver().image_info(image.image_ref)
+        except Exception as exc:  # noqa: BLE001 - recorded, not raised
+            image.status = UserImageStatus.failed
+            image.error = str(exc)[:500]
+            db.commit()
+            log.warning("image commit failed for %s: %s", image.image_ref, exc)
+            return
+        image.status = UserImageStatus.ready
+        image.error = None
+        image.digest = info.get("digest") or digest
+        image.size_bytes = info.get("size", 0)
+        db.commit()
+        log.info("image commit finished: %s", image.image_ref)
+
+
+def commit(db: Session, user: User, instance: Instance, name: str, note: str = "") -> UserImage:
+    """Synchronous commit (used where a caller needs the finished row)."""
+    image = start_commit(db, user, instance, name, note)
+    finish_commit(image.id)
+    db.refresh(image)
+    if image.status != UserImageStatus.ready:
+        raise ApiError("IMAGE_COMMIT_FAILED", image.error or "保存镜像失败", 422)
     return image
 
 

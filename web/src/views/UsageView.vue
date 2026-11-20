@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { Coin, Connection, Cpu, Timer } from '@element-plus/icons-vue'
 import { api, errorMessage } from '@/api/client'
 import LineChart from '@/components/LineChart.vue'
+import { formatBucket } from '@/utils/datetime'
 
 interface UsagePayload {
   summary: {
@@ -58,11 +59,7 @@ function hours(seconds: number) {
   return (seconds / 3600).toFixed(1)
 }
 
-const labels = computed(() =>
-  (data.value?.series ?? []).map((item) =>
-    item.ts.includes('T') ? item.ts.slice(5, 16).replace('T', ' ') : item.ts.slice(5),
-  ),
-)
+const labels = computed(() => (data.value?.series ?? []).map((item) => formatBucket(item.ts)))
 
 onMounted(load)
 </script>

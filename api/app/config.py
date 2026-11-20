@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     docker_timeout: int = 300
     docker_commit_timeout: int = 1800
     docker_pull_timeout: int = 3600
+    # How long to wait for a freshly created instance to report healthy. The
+    # first boot of a dsh image composes its profile and can take minutes on a
+    # small host; giving up too early used to mark a perfectly good instance as
+    # failed. A timeout is not fatal either — reconcile re-probes and recovers.
+    instance_health_timeout: int = 300
 
     # ── published image catalogue (M6) ───────────────────────────────────
     # The console watches this repository for new dsh builds. It is a registry

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
+import { formatDateTime } from '@/utils/datetime'
 import TerminalPanel from '@/components/TerminalPanel.vue'
 
 interface AdminInstance {
@@ -36,13 +37,19 @@ async function load() {
   }
 }
 
+// `${id}:${action}` so only the button that was pressed spins.
+const pending = ref<string | null>(null)
+
 async function action(row: AdminInstance, name: 'start' | 'stop' | 'restart') {
+  pending.value = `${row.id}:${name}`
   try {
     await api.post(`/admin/instances/${row.id}/${name}`)
     ElMessage.success('操作已提交')
     await load()
   } catch (error) {
     ElMessage.error(errorMessage(error))
+  } finally {
+    pending.value = null
   }
 }
 
@@ -150,17 +157,39 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="最近启动" width="140">
           <template #default="{ row }">
-            <span class="muted">{{
-              row.last_started_at?.replace('T', ' ').slice(0, 16) ?? '—'
-            }}</span>
+            <span class="muted">{{ formatDateTime(row.last_started_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button link type="primary" @click="action(row, 'start')">启动</el-button>
-              <el-button link type="primary" @click="action(row, 'stop')">停止</el-button>
-              <el-button link type="primary" @click="action(row, 'restart')">重启</el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="pending === `${row.id}:start`"
+                :disabled="pending !== null && pending !== `${row.id}:start`"
+                @click="action(row, 'start')"
+              >
+                启动
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="pending === `${row.id}:stop`"
+                :disabled="pending !== null && pending !== `${row.id}:stop`"
+                @click="action(row, 'stop')"
+              >
+                停止
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="pending === `${row.id}:restart`"
+                :disabled="pending !== null && pending !== `${row.id}:restart`"
+                @click="action(row, 'restart')"
+              >
+                重启
+              </el-button>
               <el-button link type="primary" @click="showLogs(row)">日志</el-button>
               <el-tooltip
                 :disabled="terminalEnabled"

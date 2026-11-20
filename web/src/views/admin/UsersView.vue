@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
+import { formatDateTime } from '@/utils/datetime'
 import type { AdminQuota, AdminUser, Paginated, Plan } from '@/types'
 
 const loading = ref(false)
@@ -308,7 +309,7 @@ onMounted(async () => {
         <el-table-column label="最近登录" width="170">
           <template #default="{ row }">
             <span class="muted">{{
-              row.last_login_at?.replace('T', ' ').slice(0, 16) ?? '从未'
+              row.last_login_at ? formatDateTime(row.last_login_at) : '从未'
             }}</span>
           </template>
         </el-table-column>

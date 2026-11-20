@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage, getCsrfToken } from '@/api/client'
 
@@ -160,7 +161,7 @@ onMounted(() => load('/'))
           <template #default="{ row }">{{ row.type === 'dir' ? '—' : size(row.size) }}</template>
         </el-table-column>
         <el-table-column label="修改时间" width="180">
-          <template #default="{ row }">{{ row.modified_at.replace('T', ' ').slice(0, 16) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.modified_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">

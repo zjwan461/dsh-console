@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Box } from '@element-plus/icons-vue'
 import { api, errorMessage, getCsrfToken } from '@/api/client'
+import { formatDateTime } from '@/utils/datetime'
 
 interface ImageRow {
   id: number
@@ -220,17 +221,27 @@ async function onTar(event: Event) {
   }
 }
 
+// Per-row busy marker so the clicked button spins and the rest of the row waits.
+const pending = ref<number | null>(null)
+
 async function setDefault(row: ImageRow) {
+  pending.value = row.id
   try {
     await api.patch(`/admin/images/${row.id}`, { is_default: true })
     ElMessage.success('已设为默认版本')
-    await Promise.all([load(), loadCatalog()])
+    await load()
   } catch (error) {
     ElMessage.error(errorMessage(error))
+  } finally {
+    pending.value = null
   }
+  // The catalogue lives in the other tab and may hit the registry; never make
+  // the click wait for it.
+  void loadCatalog()
 }
 
 async function toggle(row: ImageRow) {
+  pending.value = row.id
   try {
     await api.patch(`/admin/images/${row.id}`, {
       status: row.status === 'ready' ? 'disabled' : 'ready',
@@ -238,18 +249,29 @@ async function toggle(row: ImageRow) {
     await load()
   } catch (error) {
     ElMessage.error(errorMessage(error))
+  } finally {
+    pending.value = null
   }
+  void loadCatalog()
 }
 
 async function remove(row: ImageRow) {
   try {
     await ElMessageBox.confirm(`删除版本 ${row.version}？`, '删除镜像', { type: 'warning' })
+  } catch {
+    return
+  }
+  pending.value = row.id
+  try {
     await api.del(`/admin/images/${row.id}`)
     ElMessage.success('已删除')
-    await Promise.all([load(), loadCatalog()])
+    await load()
   } catch (error) {
-    if (error !== 'cancel') ElMessage.error(errorMessage(error))
+    ElMessage.error(errorMessage(error))
+  } finally {
+    pending.value = null
   }
+  void loadCatalog()
 }
 
 function tag(status: string) {
@@ -371,15 +393,33 @@ onUnmounted(stopPolling)
             <el-table-column label="大小" width="100">
               <template #default="{ row }">{{ sizeText(row.size_bytes) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="220" fixed="right">
+            <el-table-column label="操作" width="240" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" :disabled="row.is_default" @click="setDefault(row)">
+                <el-button
+                  link
+                  type="primary"
+                  :loading="pending === row.id"
+                  :disabled="row.is_default || (pending !== null && pending !== row.id)"
+                  @click="setDefault(row)"
+                >
                   设为默认
                 </el-button>
-                <el-button link type="primary" @click="toggle(row)">
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="pending !== null && pending !== row.id"
+                  @click="toggle(row)"
+                >
                   {{ row.status === 'ready' ? '禁用' : '启用' }}
                 </el-button>
-                <el-button link type="danger" @click="remove(row)">删除</el-button>
+                <el-button
+                  link
+                  type="danger"
+                  :disabled="pending !== null && pending !== row.id"
+                  @click="remove(row)"
+                >
+                  删除
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -395,7 +435,7 @@ onUnmounted(stopPolling)
         <div class="toolbar">
           <span class="mono muted" style="font-size: 12px">{{ catalog?.repository }}</span>
           <span class="muted" style="font-size: 12px">
-            上次检查 {{ catalog?.checked_at?.replace('T', ' ').slice(0, 16) ?? '从未' }}
+            上次检查 {{ formatDateTime(catalog?.checked_at) }}
           </span>
           <el-button size="small" :loading="catalogLoading" @click="refreshCatalog">
             立即检查
@@ -432,7 +472,7 @@ onUnmounted(stopPolling)
             <el-table-column label="构建时间" width="170">
               <template #default="{ row }">
                 <span class="muted">
-                  {{ row.created_at?.replace('T', ' ').slice(0, 16) ?? '—' }}
+                  {{ formatDateTime(row.created_at) }}
                 </span>
               </template>
             </el-table-column>

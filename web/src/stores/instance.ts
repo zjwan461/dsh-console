@@ -3,7 +3,15 @@ import { defineStore } from 'pinia'
 import { api } from '@/api/client'
 import type { Instance, InstanceEventItem, InstanceOptions, InstanceStatus } from '@/types'
 
-const TRANSITIONAL: InstanceStatus[] = ['provisioning', 'starting', 'waking', 'stopping', 'deleting']
+const TRANSITIONAL: InstanceStatus[] = [
+  'provisioning',
+  'starting',
+  'waking',
+  'stopping',
+  'deleting',
+]
+
+export type InstanceAction = 'create' | 'start' | 'stop' | 'restart' | 'sleep' | 'remove'
 
 interface LaunchResult {
   state: string
@@ -17,6 +25,9 @@ export const useInstanceStore = defineStore('instance', () => {
   const events = ref<InstanceEventItem[]>([])
   const loading = ref(false)
   const busy = ref(false)
+  // Which action is in flight, so each button can spin on its own instead of
+  // every button going dead with no feedback.
+  const pendingAction = ref<InstanceAction | null>(null)
   const pendingLaunch = ref(false)
   const lastError = ref('')
   let timer: number | null = null
@@ -54,6 +65,7 @@ export const useInstanceStore = defineStore('instance', () => {
 
   async function create(imageId: number | null, idleTimeoutSeconds?: number) {
     busy.value = true
+    pendingAction.value = 'create'
     lastError.value = ''
     try {
       await api.post('/instances/me', {
@@ -65,11 +77,13 @@ export const useInstanceStore = defineStore('instance', () => {
       startPolling()
     } finally {
       busy.value = false
+      pendingAction.value = null
     }
   }
 
   async function act(action: 'start' | 'stop' | 'restart' | 'sleep') {
     busy.value = true
+    pendingAction.value = action
     lastError.value = ''
     try {
       await api.post(`/instances/me/${action}`)
@@ -77,11 +91,13 @@ export const useInstanceStore = defineStore('instance', () => {
       startPolling()
     } finally {
       busy.value = false
+      pendingAction.value = null
     }
   }
 
   async function remove(username: string) {
     busy.value = true
+    pendingAction.value = 'remove'
     try {
       await api.del(`/instances/me?confirm=${encodeURIComponent(username)}`)
       instance.value = null
@@ -89,6 +105,7 @@ export const useInstanceStore = defineStore('instance', () => {
       await loadOptions().catch(() => undefined)
     } finally {
       busy.value = false
+      pendingAction.value = null
     }
   }
 
@@ -149,6 +166,7 @@ export const useInstanceStore = defineStore('instance', () => {
     events,
     loading,
     busy,
+    pendingAction,
     pendingLaunch,
     lastError,
     isTransitional,

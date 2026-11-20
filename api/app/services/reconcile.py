@@ -19,6 +19,7 @@ STUCK_AFTER = timedelta(minutes=15)
 def reconcile(db: Session) -> dict:
     driver = get_driver()
     fixed_errors = 0
+    recovered = 0
     checked = 0
     for instance in db.query(Instance).filter(Instance.status != InstanceStatus.deleted).all():
         checked += 1
@@ -56,6 +57,26 @@ def reconcile(db: Session) -> dict:
                 instance.error = "operation timed out"
                 log_event(db, instance, "reconcile_timeout", None, InstanceStatus.error)
                 fixed_errors += 1
+        elif instance.status == InstanceStatus.error and instance.container_id:
+            # `error` is not necessarily terminal: the health wait gives up while
+            # dsh is still composing its profile on a slow first boot, and the
+            # container often comes up fine seconds later. Re-probe instead of
+            # leaving a working instance marked as failed.
+            try:
+                info = driver.inspect(instance.container_id)
+            except DriverError:
+                continue
+            healthy = info.status == "running" and info.health in {None, "healthy"}
+            if not healthy:
+                continue
+            previous = instance.status
+            instance.status = InstanceStatus.running
+            instance.health = "healthy"
+            instance.error = None
+            instance.status_reason = None
+            instance.last_started_at = info.started_at or utcnow()
+            log_event(db, instance, "recovered", previous, InstanceStatus.running, "容器已自愈")
+            recovered += 1
     db.commit()
     caddy_error = None
     try:
@@ -63,4 +84,9 @@ def reconcile(db: Session) -> dict:
     except caddy.CaddyError as exc:
         caddy_error = str(exc)
         log.warning("reconcile could not apply caddy config: %s", exc)
-    return {"checked": checked, "fixed": fixed_errors, "caddy_error": caddy_error}
+    return {
+        "checked": checked,
+        "fixed": fixed_errors,
+        "recovered": recovered,
+        "caddy_error": caddy_error,
+    }

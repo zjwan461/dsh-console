@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 
@@ -110,7 +111,7 @@ onMounted(load)
         <el-table-column prop="priority" label="优先级" width="100" />
         <el-table-column prop="message_count" label="消息" width="90" />
         <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ row.created_at.replace('T', ' ').slice(0, 16) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
       </el-table>
     </div>
@@ -149,13 +150,13 @@ onMounted(load)
       <template v-if="detail">
         <div class="meta">
           <el-tag :type="tagType(detail.status)">{{ detail.status }}</el-tag>
-          <span class="muted">{{ detail.created_at.replace('T', ' ').slice(0, 16) }}</span>
+          <span class="muted">{{ formatDateTime(detail.created_at) }}</span>
         </div>
         <div class="messages">
           <div v-for="message in detail.messages" :key="message.id" class="message">
             <div class="message-head">
               <strong>{{ message.author }}</strong>
-              <span class="muted">{{ message.created_at.replace('T', ' ').slice(0, 16) }}</span>
+              <span class="muted">{{ formatDateTime(message.created_at) }}</span>
             </div>
             <div class="message-body">{{ message.body }}</div>
           </div>

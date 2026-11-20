@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 import type { InstanceOptions } from '@/types'
@@ -46,13 +46,45 @@ function openCommit() {
   visible.value = true
 }
 
+// `docker commit` takes minutes on a multi-GB container; the API only reserves the
+// row, so poll it instead of leaving the dialog spinning with no feedback.
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+async function pollCommit() {
+  stopPolling()
+  if (!rows.value.some((row) => row.status === 'committing')) return
+  pollTimer = setTimeout(async () => {
+    await load()
+    const failed = rows.value.find((row) => row.status === 'failed')
+    if (failed) {
+      ElMessage.error(`保存失败：${failed.error ?? failed.name}`)
+      stopPolling()
+      return
+    }
+    if (!rows.value.some((row) => row.status === 'committing')) {
+      ElMessage.success('镜像已保存')
+      stopPolling()
+      return
+    }
+    await pollCommit()
+  }, 4000)
+}
+
 async function submit() {
   saving.value = true
   try {
     await api.post('/instances/me/images', form)
-    ElMessage.success('镜像已保存')
+    ElMessage.success('已开始保存镜像，可关闭本页，进度见列表')
     visible.value = false
     await load()
+    await pollCommit()
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -62,11 +94,9 @@ async function submit() {
 
 async function rebuild(row: UserImageRow) {
   try {
-    await ElMessageBox.confirm(
-      '用该镜像重建实例（保留数据），实例会重启。继续？',
-      '从镜像重建',
-      { type: 'warning' },
-    )
+    await ElMessageBox.confirm('用该镜像重建实例（保留数据），实例会重启。继续？', '从镜像重建', {
+      type: 'warning',
+    })
     await api.post(`/me/images/${row.id}/rebuild`)
     ElMessage.success('正在重建')
     await load()
@@ -104,7 +134,13 @@ function size(bytes: number) {
   return bytes ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : '—'
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // A commit started before a refresh keeps running server-side.
+  if (rows.value.some((row) => row.status === 'committing')) await pollCommit()
+})
+
+onUnmounted(stopPolling)
 </script>
 
 <template>
@@ -121,7 +157,9 @@ onMounted(load)
       <div class="switch-row">
         <div>
           <strong>基础版本</strong>
-          <div class="muted" style="font-size: 12px">跨版本切换前会自动保留数据（建议先建快照）</div>
+          <div class="muted" style="font-size: 12px">
+            跨版本切换前会自动保留数据（建议先建快照）
+          </div>
         </div>
         <div style="display: flex; gap: 8px">
           <el-select v-model="version" placeholder="选择版本" style="width: 220px">
@@ -141,15 +179,32 @@ onMounted(load)
       <el-table v-loading="loading" :data="rows" stripe>
         <el-table-column prop="name" label="名称" width="160" />
         <el-table-column label="引用" min-width="240">
-          <template #default="{ row }"><span class="mono" style="font-size: 12px">{{ row.image_ref }}</span></template>
+          <template #default="{ row }"
+            ><span class="mono" style="font-size: 12px">{{ row.image_ref }}</span></template
+          >
         </el-table-column>
         <el-table-column prop="base_version" label="基础版本" width="140" />
         <el-table-column label="大小" width="100">
           <template #default="{ row }">{{ size(row.size_bytes) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'ready' ? 'success' : 'info'">{{ row.status }}</el-tag>
+            <el-tooltip
+              v-if="row.status === 'failed' && row.error"
+              :content="row.error"
+              placement="top"
+            >
+              <el-tag type="danger">失败</el-tag>
+            </el-tooltip>
+            <el-tag
+              v-else-if="row.status === 'committing'"
+              type="warning"
+              effect="light"
+              class="pulse"
+            >
+              保存中
+            </el-tag>
+            <el-tag v-else type="success">可用</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="170" fixed="right">
@@ -188,6 +243,27 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 「保存中」要看起来还在动，否则用户以为卡住了 */
+.pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}
+
 .switch-row {
   display: flex;
   justify-content: space-between;

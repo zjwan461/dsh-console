@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 import type { AuditEntry, Paginated } from '@/types'
@@ -74,12 +75,14 @@ onMounted(load)
       <el-table v-loading="loading" :data="rows" stripe>
         <el-table-column label="时间" width="170">
           <template #default="{ row }">
-            {{ row.created_at.replace('T', ' ').slice(0, 19) }}
+            {{ formatDateTime(row.created_at, { seconds: true }) }}
           </template>
         </el-table-column>
         <el-table-column prop="actor_name" label="操作者" width="120" />
         <el-table-column prop="action" label="动作" width="220">
-          <template #default="{ row }"><span class="mono">{{ row.action }}</span></template>
+          <template #default="{ row }"
+            ><span class="mono">{{ row.action }}</span></template
+          >
         </el-table-column>
         <el-table-column label="目标" width="160">
           <template #default="{ row }">

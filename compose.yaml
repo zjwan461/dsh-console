@@ -40,6 +40,9 @@ x-api-env: &api-env
   STATS_INTERVAL_SECONDS: ${STATS_INTERVAL_SECONDS:-30}
   USAGE_FLUSH_SECONDS: ${USAGE_FLUSH_SECONDS:-60}
   IDLE_CHECK_SECONDS: ${IDLE_CHECK_SECONDS:-60}
+  # The first boot of a dsh image composes its profile and can exceed a minute on
+  # a small host; a timeout is recoverable (reconcile re-probes), not fatal.
+  INSTANCE_HEALTH_TIMEOUT: ${INSTANCE_HEALTH_TIMEOUT:-300}
   DOCKER_TIMEOUT: ${DOCKER_TIMEOUT:-300}
   DOCKER_COMMIT_TIMEOUT: ${DOCKER_COMMIT_TIMEOUT:-1800}
   DOCKER_PULL_TIMEOUT: ${DOCKER_PULL_TIMEOUT:-3600}

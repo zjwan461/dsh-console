@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, errorMessage, getCsrfToken } from '@/api/client'
 
@@ -158,9 +159,7 @@ async function save() {
     if (editing.value) {
       await api.put(`/admin/skills/${editing.value.id}`, { ...form, changelog: '编辑' })
       ElMessage.success(
-        editing.value.status === 'published'
-          ? '已保存并热更新到实例'
-          : '已保存草稿，发布后生效',
+        editing.value.status === 'published' ? '已保存并热更新到实例' : '已保存草稿，发布后生效',
       )
     } else {
       await api.post('/admin/skills', form)
@@ -376,7 +375,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="更新时间" width="145">
           <template #default="{ row }">
-            <span class="muted">{{ row.updated_at.replace('T', ' ').slice(0, 16) }}</span>
+            <span class="muted">{{ formatDateTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="240" fixed="right">
@@ -497,7 +496,7 @@ onMounted(() => {
         <el-table-column prop="changelog" label="说明" />
         <el-table-column label="时间" width="160">
           <template #default="{ row }">
-            {{ row.created_at.replace('T', ' ').slice(0, 16) }}
+            {{ formatDateTime(row.created_at) }}
           </template>
         </el-table-column>
         <el-table-column label="操作" width="100">

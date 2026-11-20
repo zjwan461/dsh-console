@@ -491,7 +491,7 @@ def provision(instance_id: int, *, prelocked: bool = False) -> None:
             instance.container_id = driver.create(spec)
             db.commit()
         driver.start(instance.container_id)
-        info = driver.wait_healthy(instance.container_id, timeout=90)
+        info = driver.wait_healthy(instance.container_id, timeout=settings.instance_health_timeout)
         if info.status in {"exited", "dead"} or info.health not in {None, "healthy"}:
             # The container's own explanation is far more useful than the status:
             # e.g. "[dsh] ERROR: $DSH_HOME (/data/dsh) is not writable by uid
@@ -574,7 +574,7 @@ def start_instance(
             instance.container_id = driver.create(spec)
             db.commit()
         driver.start(instance.container_id)
-        info = driver.wait_healthy(instance.container_id)
+        info = driver.wait_healthy(instance.container_id, timeout=settings.instance_health_timeout)
         if info.status in {"exited", "dead"}:
             raise RuntimeError("container exited during startup")
         instance.status = InstanceStatus.running
@@ -666,6 +666,33 @@ def stop_instance(
         _unlock(instance_id)
 
 
+def apply_plan(
+    db: Session, instance: Instance, *, cpu_cores: float, memory_mb: int, disk_gb: int | None
+) -> bool:
+    """Copy a new plan's shape onto the instance and force a container rebuild.
+
+    Docker cannot change `--cpus`/`--memory` on a live container, so the stored
+    values alone would lie about what is actually running. The instance spec is
+    updated and the container is re-created (its config hash changes), which is
+    the same mechanism a version switch uses.
+    """
+    changed = (
+        float(instance.cpu_cores) != float(cpu_cores)
+        or instance.memory_mb != memory_mb
+        or (disk_gb is not None and instance.disk_gb != disk_gb)
+    )
+    if not changed:
+        return False
+    instance.cpu_cores = cpu_cores
+    instance.memory_mb = memory_mb
+    if disk_gb is not None:
+        instance.disk_gb = disk_gb
+    db.commit()
+    log_event(db, instance, "plan_applied", None, None, f"{cpu_cores}C / {memory_mb}MB")
+    db.commit()
+    return True
+
+
 def restart_instance(
     instance_id: int, actor_id: int | None = None, *, prelocked: bool = False
 ) -> None:
@@ -713,7 +740,7 @@ def restart_instance(
         else:
             driver.stop(instance.container_id)
             driver.start(instance.container_id)
-        info = driver.wait_healthy(instance.container_id)
+        info = driver.wait_healthy(instance.container_id, timeout=settings.instance_health_timeout)
         instance.status = InstanceStatus.running
         instance.needs_restart = False
         plugin_repo.cleanup_stale_plugin_dirs(db, instance)

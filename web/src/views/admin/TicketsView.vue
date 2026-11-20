@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { formatDateTime } from '@/utils/datetime'
 import { ElMessage } from 'element-plus'
 import { api, errorMessage } from '@/api/client'
 
@@ -143,9 +144,7 @@ onMounted(load)
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{
-            row.created_at.replace('T', ' ').slice(0, 16)
-          }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
       </el-table>
     </div>
@@ -164,7 +163,7 @@ onMounted(load)
           <div v-for="message in detail.messages" :key="message.id" class="message">
             <div class="head">
               <strong>{{ message.author }}</strong>
-              <span class="muted">{{ message.created_at.replace('T', ' ').slice(0, 16) }}</span>
+              <span class="muted">{{ formatDateTime(message.created_at) }}</span>
             </div>
             <div class="body">{{ message.body }}</div>
           </div>
